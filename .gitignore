@@ -1,0 +1,30 @@
+# Google OAuth Credentials
+credentials/client_secret.json
+credentials/token.json
+
+# Local persistence and settings
+data/contacts.db
+data/settings.json
+data/campaigns.json
+data/cache.json
+
+# System & Application Logs
+logs/
+*.log
+
+# Python cache & environment
+__pycache__/
+*.pyc
+*.pyo
+*.pyd
+.pytest_cache/
+.venv/
+venv/
+env/
+
+# Streamlit specific
+.streamlit/
+
+# OS-specific files
+.DS_Store
+Thumbs.db
