@@ -71,6 +71,54 @@ class TestEmailCampaignManager(unittest.TestCase):
             except Exception:
                 pass
 
+    def test_db_service_verification_mapping(self):
+        from services.db_service import DBService
+        db = DBService("data/test_contacts_ver.db")
+        records = [
+            {"Name": "Sai", "email": "sai@test.com", "Email Verified": "unverified"},
+            {"First Name": "Mansi", "Email": "mansi@test.com", "Email Verified": "verified"},
+            {"First Name": "Ojas", "Email": "ojas@test.com", "is_verified": "true"},
+            {"First Name": "Tushar", "Email": "tushar@test.com"}
+        ]
+        db.import_contacts("test_camp", records, overwrite=True)
+        fetched = db.read_all_contacts("test_camp")
+        
+        self.assertEqual(len(fetched), 4)
+        
+        # Check that "sai@test.com" has verified = "No"
+        sai_contact = next(c for c in fetched if c["Email"] == "sai@test.com")
+        self.assertEqual(sai_contact["Verified"], "No")
+        # Ensure 'Email Verified' and 'Name' are NOT in extra_json
+        import json
+        db_conn = db._get_connection()
+        row = db_conn.execute("SELECT extra_json FROM contacts WHERE email = 'sai@test.com'").fetchone()
+        extra = json.loads(row["extra_json"])
+        self.assertNotIn("Email Verified", extra)
+        self.assertNotIn("Name", extra)
+        
+        # Check that "mansi@test.com" has verified = "Yes"
+        mansi_contact = next(c for c in fetched if c["Email"] == "mansi@test.com")
+        self.assertEqual(mansi_contact["Verified"], "Yes")
+        
+        # Check that "ojas@test.com" has verified = "Yes"
+        ojas_contact = next(c for c in fetched if c["Email"] == "ojas@test.com")
+        self.assertEqual(ojas_contact["Verified"], "Yes")
+        
+        # Check that "tushar@test.com" defaulted to "Yes"
+        tushar_contact = next(c for c in fetched if c["Email"] == "tushar@test.com")
+        self.assertEqual(tushar_contact["Verified"], "Yes")
+
+        # Clean up
+        import gc
+        del db
+        gc.collect()
+        import os
+        if os.path.exists("data/test_contacts_ver.db"):
+            try:
+                os.remove("data/test_contacts_ver.db")
+            except Exception:
+                pass
+
     def test_db_service_reset(self):
         from services.db_service import DBService
         db = DBService("data/test_contacts_reset.db")

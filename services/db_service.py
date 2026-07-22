@@ -25,6 +25,7 @@ from constants import (
     CampaignStatus,
 )
 from utils.logger import log_campaign_action
+from utils.validator import is_truthy
 
 
 class DBService:
@@ -92,41 +93,98 @@ class DBService:
             now_iso = datetime.now().isoformat()
 
             for rec in records:
-                email = str(rec.get(COL_EMAIL) or rec.get("email") or rec.get("Email") or "").strip()
+                # Find resolved keys to extract core fields and filter from extra_json
+                email_key = None
+                email_val = ""
+                for k in (COL_EMAIL, "email", "Email"):
+                    if k in rec:
+                        email_key = k
+                        email_val = str(rec[k] or "").strip()
+                        break
+                if not email_key:
+                    for k in rec.keys():
+                        if k.lower().strip() == "email":
+                            email_key = k
+                            email_val = str(rec[k] or "").strip()
+                            break
+
+                email = email_val
                 if not email:
                     continue
 
-                first_name = str(rec.get(COL_FIRST_NAME) or rec.get("first_name") or rec.get("First Name") or rec.get("Name") or "").strip()
-                verified_keys = (COL_VERIFIED, "verified", "Verified")
-                has_verified_key = any(k in rec for k in verified_keys)
-                if not has_verified_key:
+                first_name_key = None
+                first_name_val = ""
+                for k in (COL_FIRST_NAME, "first_name", "First Name", "Name", "name"):
+                    if k in rec:
+                        first_name_key = k
+                        first_name_val = str(rec[k] or "").strip()
+                        break
+                if not first_name_key:
+                    for k in rec.keys():
+                        k_norm = k.lower().strip().replace(" ", "").replace("_", "").replace("-", "")
+                        if k_norm in ("firstname", "name"):
+                            first_name_key = k
+                            first_name_val = str(rec[k] or "").strip()
+                            break
+
+                first_name = first_name_val
+
+                verified_key = None
+                verified_val = None
+                for k in (COL_VERIFIED, "verified", "Verified", "Email Verified", "Email Verification", "email verified", "email verification", "is_verified", "is verified"):
+                    if k in rec:
+                        verified_key = k
+                        verified_val = rec[k]
+                        break
+                if not verified_key:
+                    for k in rec.keys():
+                        k_norm = k.lower().strip().replace(" ", "").replace("_", "").replace("-", "")
+                        if k_norm in ("verified", "emailverified", "emailverification", "isverified"):
+                            verified_key = k
+                            verified_val = rec[k]
+                            break
+
+                if verified_key is None:
                     verified = "Yes"
                 else:
-                    val = None
-                    for k in verified_keys:
-                        if k in rec:
-                            val = rec[k]
-                            break
-                    val_str = str(val).strip() if val is not None else ""
-                    if val_str.lower() in ("nan", "none", ""):
-                        verified = "No"
-                    else:
-                        verified = val_str
-                response_got = str(rec.get(COL_RESPONSE_GOT) or rec.get("response_got") or rec.get("Response Got") or "").strip()
-                status = str(rec.get(COL_STATUS) or rec.get("status") or rec.get("Status") or CampaignStatus.PENDING.value).strip()
+                    verified = "Yes" if is_truthy(verified_val) else "No"
 
-                email_sent_date = str(
-                    rec.get(COL_EMAIL_SENT_DATE)
-                    or rec.get("Email Sent Date")
-                    or rec.get("email_sent_date")
-                    or ""
-                ).strip()
-                followup_sent_date = str(
-                    rec.get(COL_FOLLOWUP_SENT_DATE)
-                    or rec.get("Follow-up Sent Date")
-                    or rec.get("followup_sent_date")
-                    or ""
-                ).strip()
+                response_got_key = None
+                response_got_val = ""
+                for k in (COL_RESPONSE_GOT, "response_got", "Response Got"):
+                    if k in rec:
+                        response_got_key = k
+                        response_got_val = str(rec[k] or "").strip()
+                        break
+                response_got = response_got_val
+
+                status_key = None
+                status_val = ""
+                for k in (COL_STATUS, "status", "Status"):
+                    if k in rec:
+                        status_key = k
+                        status_val = str(rec[k] or "").strip()
+                        break
+                status = status_val or CampaignStatus.PENDING.value
+
+                email_sent_date_key = None
+                email_sent_date_val = ""
+                for k in (COL_EMAIL_SENT_DATE, "Email Sent Date", "email_sent_date", "Email Sent Date & Time"):
+                    if k in rec:
+                        email_sent_date_key = k
+                        email_sent_date_val = str(rec[k] or "").strip()
+                        break
+                email_sent_date = email_sent_date_val
+
+                followup_sent_date_key = None
+                followup_sent_date_val = ""
+                for k in (COL_FOLLOWUP_SENT_DATE, "Follow-up Sent Date", "followup_sent_date", "Follow-up Sent Date & Time"):
+                    if k in rec:
+                        followup_sent_date_key = k
+                        followup_sent_date_val = str(rec[k] or "").strip()
+                        break
+                followup_sent_date = followup_sent_date_val
+
                 last_error = str(rec.get(COL_LAST_ERROR) or "")
                 attempt_count = int(rec.get(COL_ATTEMPT_COUNT) or 0)
                 next_followup_date = str(rec.get(COL_NEXT_FOLLOWUP_DATE) or "")
@@ -134,15 +192,15 @@ class DBService:
                 gmail_thread_id = str(rec.get(COL_GMAIL_THREAD_ID) or "")
 
                 # Store all remaining fields in extra_json
-                known_keys = {
-                    COL_EMAIL, COL_FIRST_NAME, COL_VERIFIED, COL_RESPONSE_GOT,
-                    COL_STATUS, COL_EMAIL_SENT_DATE, COL_FOLLOWUP_SENT_DATE,
+                resolved_keys = {
+                    email_key, first_name_key, verified_key, response_got_key,
+                    status_key, email_sent_date_key, followup_sent_date_key,
                     COL_LAST_ERROR, COL_LAST_UPDATED, COL_ATTEMPT_COUNT,
                     COL_NEXT_FOLLOWUP_DATE, COL_GMAIL_MESSAGE_ID, COL_GMAIL_THREAD_ID,
                     "email", "first_name", "verified", "response_got", "status",
                     "Email Sent Date", "Follow-up Sent Date", "email_sent_date", "followup_sent_date"
                 }
-                extra = {k: str(v) for k, v in rec.items() if k not in known_keys and not k.startswith("_")}
+                extra = {k: str(v) for k, v in rec.items() if k not in resolved_keys and k is not None and not k.startswith("_")}
                 extra_json_str = json.dumps(extra)
 
                 # Check if already exists for this campaign
