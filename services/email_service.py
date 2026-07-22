@@ -13,10 +13,12 @@ from constants import (
     COL_EMAIL,
     COL_EMAIL_SENT_DATE,
     COL_FIRST_NAME,
+    COL_FOLLOWUP_SENT_DATE,
     COL_GMAIL_MESSAGE_ID,
     COL_GMAIL_THREAD_ID,
     COL_LAST_ERROR,
     COL_LAST_UPDATED,
+    COL_NEXT_FOLLOWUP_DATE,
     COL_STATUS,
     COL_VERIFIED,
     DATA_SOURCE_SQLITE,
@@ -348,3 +350,58 @@ class EmailService:
             "failed": failed_count,
             "message": f"Batch completed. Sent/Drafted: {sent_count}, Failed: {failed_count}",
         }
+
+    def reset_campaign(self, campaign: Campaign) -> bool:
+        """
+        Resets all contact send statuses, sent dates, and attempt counts 
+        for the given campaign so that emails can be sent again.
+        """
+        now_iso = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+        updates = {
+            COL_EMAIL_SENT_DATE: "",
+            COL_FOLLOWUP_SENT_DATE: "",
+            COL_STATUS: CampaignStatus.PENDING.value,
+            COL_LAST_ERROR: "",
+            COL_ATTEMPT_COUNT: 0,
+            COL_NEXT_FOLLOWUP_DATE: "",
+            COL_GMAIL_MESSAGE_ID: "",
+            COL_GMAIL_THREAD_ID: "",
+            COL_LAST_UPDATED: now_iso,
+        }
+
+        # 1. Reset SQLite DB if SQLite is the source
+        if campaign.data_source == DATA_SOURCE_SQLITE:
+            self.db_service.reset_campaign_contacts(campaign.id)
+
+        # 2. Reset Google Sheet if it's the primary source or configured as secondary
+        if campaign.data_source != DATA_SOURCE_SQLITE:
+            contacts = self.get_contacts(campaign)
+            for row in contacts:
+                row_num = row.get("_row_number")
+                if row_num:
+                    self.sheets_service.queue_row_update(row_num, updates)
+            self.sheets_service.flush_updates()
+        elif campaign.spreadsheet_id:
+            # SQLite campaign with configured Google Sheet link
+            try:
+                sheet_contacts = self.sheets_service.read_all_contacts()
+                email_to_row = {}
+                for sc in sheet_contacts:
+                    email_clean = str(sc.get(COL_EMAIL, "") or "").strip().lower()
+                    if email_clean and "_row_number" in sc:
+                        email_to_row[email_clean] = sc["_row_number"]
+
+                contacts = self.get_contacts(campaign)
+                for row in contacts:
+                    email = str(row.get(COL_EMAIL, "") or "").strip()
+                    email_clean = email.lower()
+                    if email_clean in email_to_row:
+                        sheet_row_num = email_to_row[email_clean]
+                        self.sheets_service.queue_row_update(sheet_row_num, updates)
+                self.sheets_service.flush_updates()
+            except Exception as e:
+                log_campaign_action("EmailService", status="WARNING", error=str(e), message="Failed to reset Google Sheet rows")
+
+        # 3. Log the reset action
+        log_campaign_action("EmailService", status="SUCCESS", message=f"Campaign '{campaign.id}' email send states reset")
+        return True

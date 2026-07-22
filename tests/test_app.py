@@ -71,6 +71,47 @@ class TestEmailCampaignManager(unittest.TestCase):
             except Exception:
                 pass
 
+    def test_db_service_reset(self):
+        from services.db_service import DBService
+        db = DBService("data/test_contacts_reset.db")
+        records = [
+            {
+                "First Name": "Alice",
+                "Email": "alice@test.com",
+                "Verified": "Yes",
+                "Status": "Sent",
+                "Email Sent Date & Time": "2026-07-22 14:00:00",
+                "Attempt Count": "1",
+            }
+        ]
+        db.import_contacts("test_camp", records, overwrite=True)
+        
+        # Verify it imported Sent status
+        fetched = db.read_all_contacts("test_camp")
+        self.assertEqual(fetched[0]["Status"], "Sent")
+        self.assertEqual(fetched[0]["Email Sent Date & Time"], "2026-07-22 14:00:00")
+        self.assertEqual(fetched[0]["Attempt Count"], "1")
+        
+        # Reset contacts
+        db.reset_campaign_contacts("test_camp")
+        
+        # Verify columns are reset
+        fetched_after = db.read_all_contacts("test_camp")
+        self.assertEqual(fetched_after[0]["Status"], "Pending")
+        self.assertEqual(fetched_after[0]["Email Sent Date & Time"], "")
+        self.assertEqual(fetched_after[0]["Attempt Count"], "0")
+        
+        # Clean up
+        import gc
+        del db
+        gc.collect()
+        import os
+        if os.path.exists("data/test_contacts_reset.db"):
+            try:
+                os.remove("data/test_contacts_reset.db")
+            except Exception:
+                pass
+
 
 if __name__ == "__main__":
     unittest.main()

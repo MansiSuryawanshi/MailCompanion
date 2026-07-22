@@ -75,11 +75,27 @@ def render_dashboard(
                 pass
         st.metric("Last Sync", last_sync)
 
-    st.divider()
+    @st.dialog("Do you want to send again?")
+    def confirm_reset_dialog():
+        st.write(f"Are you sure you want to reset all mails for campaign **{active_campaign.name}**?")
+        st.write("This will clear email sent dates, follow-up sent dates, last errors, attempt counts, next follow-up dates, and message/thread IDs.")
+        st.write("The status will return to **Pending** so you can start sending them again.")
+        
+        col_yes, col_no = st.columns(2)
+        with col_yes:
+            if st.button("Yes, Reset", type="primary", use_container_width=True):
+                email_service = EmailService(gmail_provider, sheets_service, config_manager)
+                with st.spinner("Resetting campaign mails..."):
+                    email_service.reset_campaign(active_campaign)
+                st.toast("Campaign mails reset successfully!", icon="🔄")
+                st.rerun()
+        with col_no:
+            if st.button("No, Cancel", use_container_width=True):
+                st.rerun()
 
     # Quick Action Buttons
     st.subheader("🚀 Quick Actions")
-    qcol1, qcol2, qcol3, qcol4, qcol5 = st.columns(5)
+    qcol1, qcol2, qcol3, qcol4, qcol5, qcol6 = st.columns(6)
 
     with qcol1:
         if st.button("🔑 Connect Google", use_container_width=True):
@@ -124,6 +140,10 @@ def render_dashboard(
                     st.rerun()
 
     with qcol5:
+        if st.button("🔄 Reset Mails", use_container_width=True):
+            confirm_reset_dialog()
+
+    with qcol6:
         if st.button("🔄 Refresh Dashboard", use_container_width=True):
             st.rerun()
 

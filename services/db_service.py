@@ -275,3 +275,27 @@ class DBService:
             cursor.execute("DELETE FROM contacts WHERE campaign_id = ?", (campaign_id,))
             conn.commit()
         return True
+
+    def reset_campaign_contacts(self, campaign_id: str) -> bool:
+        """Resets status and sent details for all contacts of a given campaign in SQLite."""
+        with self._get_connection() as conn:
+            cursor = conn.cursor()
+            now_iso = datetime.now().isoformat()
+            cursor.execute(
+                """
+                UPDATE contacts SET
+                    email_sent_date = '',
+                    followup_sent_date = '',
+                    status = 'Pending',
+                    last_error = '',
+                    attempt_count = 0,
+                    next_followup_date = '',
+                    gmail_message_id = '',
+                    gmail_thread_id = '',
+                    last_updated = ?
+                WHERE campaign_id = ?
+                """,
+                (now_iso, campaign_id),
+            )
+            conn.commit()
+        return True
