@@ -10,9 +10,12 @@ from gspread.cell import Cell
 from constants import (
     AUTOMATIC_COLUMNS,
     COL_EMAIL,
+    COL_EMAIL_SENT_DATE,
     COL_FIRST_NAME,
+    COL_FOLLOWUP_SENT_DATE,
     COL_RESPONSE_GOT,
     COL_VERIFIED,
+    COLUMN_ALIASES,
     USER_PROTECTED_COLUMNS,
 )
 from services.auth_service import AuthService
@@ -74,6 +77,21 @@ class SheetsService:
 
         # Re-index headers: Column Name -> 1-based column index
         self.header_map = {h: idx + 1 for idx, h in enumerate(headers_existing_clean)}
+        self._apply_column_aliases(self.header_map)
+
+    def _apply_column_aliases(self, header_map: Dict[str, int]) -> None:
+        """
+        Lets a sheet use an alternate header name (e.g. "Name") in place of the
+        canonical column name (e.g. "First Name") by pointing the canonical name
+        at the same column index, without requiring the sheet to be renamed.
+        """
+        for canonical, aliases in COLUMN_ALIASES.items():
+            if canonical in header_map:
+                continue
+            for alias in aliases:
+                if alias in header_map:
+                    header_map[canonical] = header_map[alias]
+                    break
 
 
     def read_all_contacts(self) -> List[Dict[str, Any]]:
@@ -93,6 +111,7 @@ class SheetsService:
 
             headers = [h.strip() for h in all_values[0]]
             self.header_map = {h: idx + 1 for idx, h in enumerate(headers)}
+            self._apply_column_aliases(self.header_map)
 
             records = []
             for row_idx, row_values in enumerate(all_values[1:], start=2):

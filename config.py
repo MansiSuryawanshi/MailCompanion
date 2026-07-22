@@ -12,6 +12,8 @@ from dataclasses import dataclass, asdict, field
 from constants import (
     CAMPAIGNS_FILE,
     DATA_DIR,
+    DATA_SOURCE_GOOGLE_SHEETS,
+    DATA_SOURCE_SQLITE,
     DEFAULT_BATCH_SIZE,
     DEFAULT_DAILY_LIMIT,
     DEFAULT_FOLLOWUP_DAYS,
@@ -179,6 +181,7 @@ class ConfigManager:
             name=name,
             spreadsheet_url=spreadsheet_url,
             spreadsheet_id=sp_id,
+            data_source=DATA_SOURCE_GOOGLE_SHEETS if sp_id else DATA_SOURCE_SQLITE,
         )
         self.campaigns[new_campaign.id] = new_campaign
         self.settings["active_campaign_id"] = new_campaign.id

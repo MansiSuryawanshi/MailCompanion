@@ -2,7 +2,7 @@
 constants.py - Application Constants, Enums, and Configuration Defaults
 """
 from enum import Enum
-from typing import List, Set
+from typing import Dict, List, Set
 
 class CampaignStatus(str, Enum):
     PENDING = "Pending"
@@ -52,6 +52,13 @@ AUTOMATIC_COLUMNS: List[str] = [
 
 USER_PROTECTED_COLUMNS: Set[str] = {
     COL_RESPONSE_GOT,
+}
+
+# Alternate header names accepted in place of the canonical column name.
+# Lets a sheet keep its own labels (e.g. "Name") without renaming to "First Name".
+COLUMN_ALIASES: Dict[str, List[str]] = {
+    COL_FIRST_NAME: ["Name"],
+    COL_VERIFIED: ["Email Verified"],
 }
 
 VERIFICATION_TRUTHS: Set[str] = {
