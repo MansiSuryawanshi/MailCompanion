@@ -145,6 +145,15 @@ class EmailService:
         Executes a dry-run analysis over all contacts without sending emails.
         Returns summary report including Will Send, Skipped, Invalid, and Estimated Duration.
         """
+        # Auto-sync Google Sheet contacts to SQLite if SQLite is source and Google Sheet link exists
+        if campaign.data_source == DATA_SOURCE_SQLITE and campaign.spreadsheet_id:
+            try:
+                sheet_contacts = self.sheets_service.read_all_contacts()
+                if sheet_contacts:
+                    self.db_service.import_contacts(campaign.id, sheet_contacts, overwrite=False)
+            except Exception as e:
+                log_campaign_action("EmailService", status="WARNING", error=str(e), message="Failed to auto-sync Google Sheet contacts before dry run")
+
         contacts = self.get_contacts(campaign)
         seen_emails = set()
 
@@ -210,11 +219,9 @@ class EmailService:
         Executes campaign batch email dispatching.
         Updates contacts with batch buffering. Supports progress callbacks.
         """
-        contacts = self.get_contacts(campaign)
-        seen_emails = set()
-
-        # Build email-to-row map for Google Sheets if configured
+        # Fetch and sync Google Sheet contacts if configured
         self._email_to_sheet_row = {}
+        sheet_contacts = None
         if campaign.spreadsheet_id:
             try:
                 sheet_contacts = self.sheets_service.read_all_contacts()
@@ -222,8 +229,15 @@ class EmailService:
                     email_clean = str(sc.get(COL_EMAIL, "") or "").strip().lower()
                     if email_clean and "_row_number" in sc:
                         self._email_to_sheet_row[email_clean] = sc["_row_number"]
+                
+                # Auto-sync to database if SQLite is the source of truth
+                if campaign.data_source == DATA_SOURCE_SQLITE and sheet_contacts:
+                    self.db_service.import_contacts(campaign.id, sheet_contacts, overwrite=False)
             except Exception as e:
-                log_campaign_action("EmailService", status="WARNING", error=str(e), message="Failed to map Google Sheet rows for sync")
+                log_campaign_action("EmailService", status="WARNING", error=str(e), message="Failed to sync Google Sheet contacts before campaign batch")
+
+        contacts = self.get_contacts(campaign)
+        seen_emails = set()
 
         # Identify targets
         targets = []

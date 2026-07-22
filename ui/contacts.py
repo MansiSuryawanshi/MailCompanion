@@ -111,6 +111,26 @@ def render_contacts(config_manager: ConfigManager, auth_service: AuthService):
 
     if active_campaign.data_source == DATA_SOURCE_SQLITE:
         contacts = db_service.read_all_contacts(active_campaign.id)
+        if sp_id:
+            sheets_service = SheetsService(auth_service, sp_id)
+            if st.button("🔄 Sync with Google Sheet"):
+                if sheets_service.connect():
+                    try:
+                        sheet_contacts = sheets_service.read_all_contacts()
+                        if sheet_contacts:
+                            db_service.import_contacts(active_campaign.id, sheet_contacts, overwrite=False)
+                            st.toast(f"Successfully synchronized {len(sheet_contacts)} contacts!", icon="✅")
+                        else:
+                            st.toast("Google Sheet is empty.", icon="⚠️")
+                        from datetime import datetime
+                        active_campaign.last_sync_time = datetime.now().isoformat()
+                        config_manager.update_campaign(active_campaign)
+                        st.rerun()
+                    except Exception as e:
+                        st.error(f"Failed to sync: {e}")
+                else:
+                    st.error("Failed to connect to Google Sheet.")
+
         if not contacts and sp_id:
             st.caption("No contacts in local database. Checking Google Sheet fallback...")
             sheets_service = SheetsService(auth_service, sp_id)

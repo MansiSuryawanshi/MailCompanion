@@ -109,9 +109,21 @@ def render_dashboard(
     with qcol2:
         if st.button("🔄 Sync Sheet", use_container_width=True):
             if sheets_service and sheets_service.connect():
+                if active_campaign.data_source == "sqlite":
+                    try:
+                        sheet_contacts = sheets_service.read_all_contacts()
+                        if sheet_contacts:
+                            db_service = DBService()
+                            db_service.import_contacts(active_campaign.id, sheet_contacts, overwrite=False)
+                            st.toast(f"Synchronized {len(sheet_contacts)} contacts to database!", icon="✅")
+                        else:
+                            st.toast("Google Sheet is empty.", icon="⚠️")
+                    except Exception as e:
+                        st.error(f"Failed to sync contacts: {e}")
+                else:
+                    st.toast("Google Sheet synchronized!", icon="✅")
                 active_campaign.last_sync_time = datetime.now().isoformat()
                 config_manager.update_campaign(active_campaign)
-                st.toast("Google Sheet synchronized!", icon="✅")
                 st.rerun()
             else:
                 st.error("Failed to connect to Google Sheet.")

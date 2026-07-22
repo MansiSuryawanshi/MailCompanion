@@ -112,6 +112,129 @@ class TestEmailCampaignManager(unittest.TestCase):
             except Exception:
                 pass
 
+    def test_db_service_sync_non_overwrite(self):
+        from services.db_service import DBService
+        db = DBService("data/test_contacts_sync.db")
+        
+        # 1. Initial records
+        initial_records = [
+            {
+                "First Name": "Alice",
+                "Email": "alice@test.com",
+                "Verified": "Yes",
+                "Status": "Sent",
+                "Email Sent Date & Time": "2026-07-22 14:00:00",
+            }
+        ]
+        db.import_contacts("test_camp", initial_records, overwrite=True)
+        
+        # 2. Sync updated first name, and a new pending contact (overwrite=False)
+        sync_records = [
+            {
+                "First Name": "Alice Updated",
+                "Email": "alice@test.com",
+                "Verified": "Yes",
+                "Status": "",
+            },
+            {
+                "First Name": "Bob",
+                "Email": "bob@test.com",
+                "Verified": "Yes",
+                "Status": "Pending",
+            }
+        ]
+        db.import_contacts("test_camp", sync_records, overwrite=False)
+        
+        # 3. Verify Alice's status/sent date is preserved, first name is updated
+        # Verify Bob is added as Pending
+        fetched = db.read_all_contacts("test_camp")
+        self.assertEqual(len(fetched), 2)
+        
+        alice = next(c for c in fetched if c["Email"] == "alice@test.com")
+        bob = next(c for c in fetched if c["Email"] == "bob@test.com")
+        
+        self.assertEqual(alice["First Name"], "Alice Updated")
+        self.assertEqual(alice["Status"], "Sent")
+        self.assertEqual(alice["Email Sent Date & Time"], "2026-07-22 14:00:00")
+        
+        self.assertEqual(bob["First Name"], "Bob")
+        self.assertEqual(bob["Status"], "Pending")
+        
+        # Clean up
+        import gc
+        del db
+        gc.collect()
+        import os
+        if os.path.exists("data/test_contacts_sync.db"):
+            try:
+                os.remove("data/test_contacts_sync.db")
+            except Exception:
+                pass
+
+    def test_verified_status_defaulting(self):
+        from services.db_service import DBService
+        db = DBService("data/test_contacts_verified_default.db")
+
+        records = [
+            # 1. Verification column missing entirely -> defaults to "Yes"
+            {
+                "First Name": "Alice",
+                "Email": "alice@test.com",
+            },
+            # 2. Verification column present but blank/empty -> resolves to "No"
+            {
+                "First Name": "Bob",
+                "Email": "bob@test.com",
+                "Verified": "",
+            },
+            # 3. Verification column present but None -> resolves to "No"
+            {
+                "First Name": "Charlie",
+                "Email": "charlie@test.com",
+                "Verified": None,
+            },
+            # 4. Verification column present and set to "No" -> resolves to "No"
+            {
+                "First Name": "David",
+                "Email": "david@test.com",
+                "Verified": "No",
+            },
+            # 5. Verification column present and set to "Yes" -> resolves to "Yes"
+            {
+                "First Name": "Eve",
+                "Email": "eve@test.com",
+                "Verified": "Yes",
+            }
+        ]
+
+        db.import_contacts("test_camp", records, overwrite=True)
+
+        fetched = db.read_all_contacts("test_camp")
+        self.assertEqual(len(fetched), 5)
+
+        alice = next(c for c in fetched if c["Email"] == "alice@test.com")
+        bob = next(c for c in fetched if c["Email"] == "bob@test.com")
+        charlie = next(c for c in fetched if c["Email"] == "charlie@test.com")
+        david = next(c for c in fetched if c["Email"] == "david@test.com")
+        eve = next(c for c in fetched if c["Email"] == "eve@test.com")
+
+        self.assertEqual(alice["Verified"], "Yes")
+        self.assertEqual(bob["Verified"], "No")
+        self.assertEqual(charlie["Verified"], "No")
+        self.assertEqual(david["Verified"], "No")
+        self.assertEqual(eve["Verified"], "Yes")
+
+        # Clean up
+        import gc
+        del db
+        gc.collect()
+        import os
+        if os.path.exists("data/test_contacts_verified_default.db"):
+            try:
+                os.remove("data/test_contacts_verified_default.db")
+            except Exception:
+                pass
+
 
 if __name__ == "__main__":
     unittest.main()

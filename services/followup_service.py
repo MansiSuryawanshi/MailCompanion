@@ -94,6 +94,25 @@ class FollowupService:
         Processes and sends follow-up emails for all eligible candidates.
         Applies Gmail conversation threading using stored Gmail Thread ID.
         """
+        # Build email-to-row map and auto-sync contacts from Google Sheets if configured
+        self.email_service._email_to_sheet_row = {}
+        sheet_contacts = None
+        if campaign.spreadsheet_id:
+            try:
+                sheet_contacts = self.sheets_service.read_all_contacts()
+                for sc in sheet_contacts:
+                    email_clean = str(sc.get(COL_EMAIL, "") or "").strip().lower()
+                    if email_clean and "_row_number" in sc:
+                        self.email_service._email_to_sheet_row[email_clean] = sc["_row_number"]
+                
+                # Auto-sync to database if SQLite is the source of truth
+                if campaign.data_source == "sqlite" and sheet_contacts:
+                    from services.db_service import DBService
+                    db_service = DBService()
+                    db_service.import_contacts(campaign.id, sheet_contacts, overwrite=False)
+            except Exception as e:
+                log_campaign_action("FollowupService", status="WARNING", error=str(e), message="Failed to sync Google Sheet contacts before follow-up batch")
+
         candidates = self.find_followup_candidates(campaign)
         total_candidates = len(candidates)
 
@@ -105,18 +124,6 @@ class FollowupService:
                 "failed": 0,
                 "message": "No contacts eligible for follow-up at this time.",
             }
-
-        # Build email-to-row map for Google Sheets if configured
-        self.email_service._email_to_sheet_row = {}
-        if campaign.spreadsheet_id:
-            try:
-                sheet_contacts = self.sheets_service.read_all_contacts()
-                for sc in sheet_contacts:
-                    email_clean = str(sc.get(COL_EMAIL, "") or "").strip().lower()
-                    if email_clean and "_row_number" in sc:
-                        self.email_service._email_to_sheet_row[email_clean] = sc["_row_number"]
-            except Exception as e:
-                log_campaign_action("FollowupService", status="WARNING", error=str(e), message="Failed to map Google Sheet rows for sync")
 
         sent_count = 0
         failed_count = 0

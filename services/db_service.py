@@ -97,7 +97,21 @@ class DBService:
                     continue
 
                 first_name = str(rec.get(COL_FIRST_NAME) or rec.get("first_name") or rec.get("First Name") or rec.get("Name") or "").strip()
-                verified = str(rec.get(COL_VERIFIED) or rec.get("verified") or rec.get("Verified") or "Yes").strip()
+                verified_keys = (COL_VERIFIED, "verified", "Verified")
+                has_verified_key = any(k in rec for k in verified_keys)
+                if not has_verified_key:
+                    verified = "Yes"
+                else:
+                    val = None
+                    for k in verified_keys:
+                        if k in rec:
+                            val = rec[k]
+                            break
+                    val_str = str(val).strip() if val is not None else ""
+                    if val_str.lower() in ("nan", "none", ""):
+                        verified = "No"
+                    else:
+                        verified = val_str
                 response_got = str(rec.get(COL_RESPONSE_GOT) or rec.get("response_got") or rec.get("Response Got") or "").strip()
                 status = str(rec.get(COL_STATUS) or rec.get("status") or rec.get("Status") or CampaignStatus.PENDING.value).strip()
 
@@ -196,7 +210,7 @@ class DBService:
                 "_row_number": index,
                 COL_FIRST_NAME: r["first_name"] or "",
                 COL_EMAIL: r["email"] or "",
-                COL_VERIFIED: r["verified"] or "Yes",
+                COL_VERIFIED: r["verified"] or "No",
                 COL_RESPONSE_GOT: r["response_got"] or "",
                 COL_EMAIL_SENT_DATE: r["email_sent_date"] or "",
                 COL_FOLLOWUP_SENT_DATE: r["followup_sent_date"] or "",
