@@ -31,8 +31,8 @@ def save_composer_templates(campaign, config_manager):
 
 
 def render_composer(config_manager: ConfigManager, auth_service: AuthService):
-    st.title("✍️ Email Composer & Campaign Execution")
-    st.caption("Design personalized templates, preview live dynamic emails, execute dry runs, and dispatch campaign emails.")
+    st.title("✍️ Write & Send Emails")
+    st.caption("Write your templates, preview personal emails, test them, and send your campaign.")
 
     active_campaign = config_manager.get_active_campaign()
     
@@ -45,33 +45,33 @@ def render_composer(config_manager: ConfigManager, auth_service: AuthService):
     gmail_provider = GmailProvider(auth_service) if auth_service.get_credentials() else None
 
     # Variable Helper Chips
-    st.info("💡 **Supported Dynamic Variables:** `{{first_name}}`, `{{email}}`, `{{current_date}}`, `{{sender_name}}` plus any header in your Google Sheet.")
+    st.info("💡 **Personalized Tags you can use:** Insert `{{first_name}}`, `{{email}}`, `{{current_date}}`, or `{{sender_name}}`. You can also use any column header name from your spreadsheet.")
 
-    tab_compose, tab_preview, tab_dryrun, tab_send = st.tabs(["📝 Email Templates", "👁️ Live Preview", "🧪 Dry Run Analysis", "🚀 Send / Dispatch"])
+    tab_compose, tab_preview, tab_dryrun, tab_send = st.tabs(["📝 Write Templates", "👁️ Preview Emails", "🧪 Run a Test Simulation", "🚀 Send Campaign"])
 
     with tab_compose:
-        st.subheader("Initial Email Template")
-        init_subj = st.text_input("Initial Email Subject", value=active_campaign.initial_subject, key="init_subj_input")
-        init_body = st.text_area("Initial Email Body (HTML or Text)", value=active_campaign.initial_body, height=180, key="init_body_input")
+        st.subheader("First Email Template")
+        init_subj = st.text_input("First Email Subject Line", value=active_campaign.initial_subject, key="init_subj_input")
+        init_body = st.text_area("First Email Message Content", value=active_campaign.initial_body, height=180, key="init_body_input")
 
         st.subheader("Follow-up Email Template")
-        follow_subj = st.text_input("Follow-up Email Subject", value=active_campaign.followup_subject, key="follow_subj_input")
-        follow_body = st.text_area("Follow-up Email Body (HTML or Text)", value=active_campaign.followup_body, height=180, key="follow_body_input")
+        follow_subj = st.text_input("Follow-up Email Subject Line", value=active_campaign.followup_subject, key="follow_subj_input")
+        follow_body = st.text_area("Follow-up Email Message Content", value=active_campaign.followup_body, height=180, key="follow_body_input")
 
-        if st.button("💾 Save Templates to Campaign", type="primary"):
+        if st.button("💾 Save Templates", type="primary"):
             active_campaign.initial_subject = init_subj
             active_campaign.initial_body = init_body
             active_campaign.followup_subject = follow_subj
             active_campaign.followup_body = follow_body
             config_manager.update_campaign(active_campaign)
-            st.success("Templates saved successfully!")
+            st.success("Message templates saved successfully!")
 
     with tab_preview:
-        st.subheader("Live Email Preview")
-        preview_mode = st.radio("Preview Type:", ["Initial Email", "Follow-up Email"], horizontal=True)
+        st.subheader("Live Preview")
+        preview_mode = st.radio("Choose email to preview:", ["First Email", "Follow-up Email"], horizontal=True)
 
-        sample_name = st.text_input("Sample First Name", value="Alex")
-        sample_email = st.text_input("Sample Email", value="alex.sample@example.com")
+        sample_name = st.text_input("Test Name", value="Alex")
+        sample_email = st.text_input("Test Email Address", value="alex.sample@example.com")
 
         if sheets_service and gmail_provider:
             email_service = EmailService(gmail_provider, sheets_service, config_manager)
@@ -79,51 +79,51 @@ def render_composer(config_manager: ConfigManager, auth_service: AuthService):
             is_f = (preview_mode == "Follow-up Email")
             subj, body_html = email_service.render_email_content(active_campaign, sample_row, is_followup=is_f)
 
-            st.markdown(f"**Rendered Subject:** `{subj}`")
+            st.markdown(f"**Preview of Subject Line:** `{subj}`")
             st.markdown("---")
-            st.markdown("**Rendered HTML Output:**")
+            st.markdown("**Preview of Message Content:**")
             components.html(body_html, height=300, scrolling=True)
 
     with tab_dryrun:
-        st.subheader("Dry Run Analysis")
-        st.write("Simulates campaign execution without sending emails or updating the Google Sheet.")
+        st.subheader("Simulation (No emails will actually be sent)")
+        st.write("Check how many emails will be sent or skipped before you start.")
 
-        if st.button("🧪 Run Dry Run Analysis", type="primary"):
+        if st.button("🧪 Run Test Simulation", type="primary"):
             if not sheets_service or not gmail_provider or not sp_id:
-                st.error("Google Authentication and valid Sheet URL required.")
+                st.error("Please connect to Google and configure your spreadsheet link first.")
             else:
                 email_service = EmailService(gmail_provider, sheets_service, config_manager)
-                with st.spinner("Analyzing sheet contacts and rules..."):
+                with st.spinner("Checking spreadsheet contacts and outreach rules..."):
                     report = email_service.run_dry_run(active_campaign)
 
                 col1, col2, col3, col4 = st.columns(4)
-                col1.metric("Will Send", report["will_send_count"])
-                col2.metric("Already Sent", report["already_sent_count"])
-                col3.metric("Skipped", report["skipped_count"])
-                col4.metric("Est. Duration", f"{report['estimated_duration_sec']}s")
+                col1.metric("Emails to Send", report["will_send_count"])
+                col2.metric("Already Sent Before", report["already_sent_count"])
+                col3.metric("Will Be Skipped", report["skipped_count"])
+                col4.metric("Estimated Time", f"{report['estimated_duration_sec']}s")
 
                 st.divider()
 
                 if report["will_send"]:
-                    st.subheader("Emails That Will Be Sent")
+                    st.subheader("List of Emails That Will Go Out")
                     st.dataframe(report["will_send"], use_container_width=True)
 
                 if report["skipped"]:
-                    st.subheader("Skipped Contacts & Reasons")
+                    st.subheader("Contacts That Will Be Skipped & Why")
                     st.dataframe(report["skipped"], use_container_width=True)
 
     with tab_send:
-        st.subheader("Campaign Send Execution & Test Mode")
+        st.subheader("Campaign Sending & Testing")
 
         # Test Send Section
-        with st.expander("✉️ Send Test Email", expanded=False):
-            test_addr = st.text_input("Test Recipient Email Address:")
-            test_type = st.radio("Test Email Type:", ["Initial", "Follow-up"], horizontal=True)
-            if st.button("Send Test Email Now"):
+        with st.expander("✉️ Send a Test Email to Yourself", expanded=False):
+            test_addr = st.text_input("Send test email to:")
+            test_type = st.radio("Type of test email:", ["First", "Follow-up"], horizontal=True)
+            if st.button("Send Test Email"):
                 if not test_addr:
-                    st.error("Enter test recipient email address.")
+                    st.error("Please enter a test email address.")
                 elif not gmail_provider or not sheets_service:
-                    st.error("Google Authentication required.")
+                    st.error("Please connect to Google first.")
                 else:
                     email_service = EmailService(gmail_provider, sheets_service, config_manager)
                     with st.spinner("Sending test email..."):
@@ -136,16 +136,16 @@ def render_composer(config_manager: ConfigManager, auth_service: AuthService):
         st.divider()
 
         # Batch Send Execution Section
-        st.subheader("🚀 Dispatch Campaign Emails")
+        st.subheader("🚀 Start the Outreach Campaign")
         draft_mode = active_campaign.draft_mode
-        st.warning(f"**Mode:** {'GMAIL DRAFT MODE (Drafts only)' if draft_mode else 'LIVE SEND MODE (Sends real emails)'}")
+        st.warning(f"**Mode:** {'Safe Mode: Creating drafts in Gmail (Go to Gmail to review and send them)' if draft_mode else 'Live Mode: Sending emails directly to recipients now'}")
 
-        retry_failed = st.checkbox("Retry Failed Emails Only", value=False)
+        retry_failed = st.checkbox("Only retry emails that failed previously", value=False)
 
         # Check if we should execute send campaign from dialog confirmation
         if st.session_state.get("execute_send_campaign"):
             if not sheets_service or not gmail_provider or not sp_id:
-                st.error("Google Auth and valid Sheet URL required.")
+                st.error("Please connect to Google and configure your spreadsheet link first.")
             else:
                 email_service = EmailService(gmail_provider, sheets_service, config_manager)
                 send_mode = st.session_state.get("send_mode", SendMode.NORMAL.value)
@@ -162,7 +162,7 @@ def render_composer(config_manager: ConfigManager, auth_service: AuthService):
                         f"**Sent:** {data['sent_count']} | **Failed:** {data['failed_count']} | **ETA Remaining:** {data['eta_seconds']}s"
                     )
 
-                with st.spinner("Dispatching campaign..."):
+                with st.spinner("Sending campaign emails..."):
                     res = email_service.execute_campaign_batch(
                         active_campaign, progress_callback=update_progress, send_mode=send_mode
                     )
@@ -179,14 +179,14 @@ def render_composer(config_manager: ConfigManager, auth_service: AuthService):
             del st.session_state["open_draft_review"]
             confirmed_mode = st.session_state.pop("pending_send_mode", SendMode.NORMAL.value)
             if not sheets_service or not gmail_provider or not sp_id:
-                st.error("Google Auth and valid Sheet URL required.")
+                st.error("Please connect to Google and configure your spreadsheet link first.")
             else:
                 email_service = EmailService(gmail_provider, sheets_service, config_manager)
                 show_draft_review_dialog(active_campaign, email_service, send_mode=confirmed_mode)
 
-        if st.button("🔥 START CAMPAIGN SEND NOW", type="primary", use_container_width=True):
+        if st.button("🚀 START SENDING EMAILS NOW", type="primary", use_container_width=True):
             if not sheets_service or not gmail_provider or not sp_id:
-                st.error("Google Auth and valid Sheet URL required.")
+                st.error("Please connect to Google and configure your spreadsheet link first.")
             elif retry_failed:
                 email_service = EmailService(gmail_provider, sheets_service, config_manager)
                 show_draft_review_dialog(active_campaign, email_service, send_mode=SendMode.RETRY_FAILED.value)
@@ -199,9 +199,9 @@ def render_composer(config_manager: ConfigManager, auth_service: AuthService):
                     show_draft_review_dialog(active_campaign, email_service, send_mode=SendMode.NORMAL.value)
 
 
-@st.dialog("Review Draft Email")
+@st.dialog("Review First Email Draft")
 def show_draft_review_dialog(campaign, email_service, send_mode=SendMode.NORMAL.value):
-    st.write("Review the draft email for the first matching contact before dispatching the campaign:")
+    st.write("Review how the email looks for the first person before sending the campaign:")
 
     # Retrieve contacts to preview the first matching email
     try:
@@ -250,14 +250,14 @@ def show_draft_review_dialog(campaign, email_service, send_mode=SendMode.NORMAL.
     contact_email = first_pending_contact.get(COL_EMAIL, "")
     contact_name = first_pending_contact.get(COL_FIRST_NAME, "")
 
-    st.write(f"📧 **Recipient Preview:** {contact_name} ({contact_email})")
+    st.write(f"📧 **Previewing for:** {contact_name} ({contact_email})")
 
     # Editable inputs for Subject and Body templates
     edited_subject = st.text_input("Subject Template", value=campaign.initial_subject)
-    edited_body = st.text_area("Body Template (HTML or Text)", value=campaign.initial_body, height=180)
+    edited_body = st.text_area("Message Template Content", value=campaign.initial_body, height=180)
 
     # Rendered Preview
-    st.markdown("**Rendered Live Draft Preview:**")
+    st.markdown("**How it will look in their inbox:**")
     from services.email_service import render_template_string
     import streamlit.components.v1 as components
 
@@ -273,11 +273,11 @@ def show_draft_review_dialog(campaign, email_service, send_mode=SendMode.NORMAL.
     st.markdown(f"**Subject:** `{preview_subj}`")
     st.markdown(preview_body, unsafe_allow_html=True)
 
-    st.write("Shall I send or edit?")
+    st.write("Are you ready to start the campaign or do you want to keep editing?")
 
     col1, col2 = st.columns(2)
     with col1:
-        if st.button("🚀 Send Campaign", type="primary", use_container_width=True):
+        if st.button("🚀 Start Sending Now", type="primary", use_container_width=True):
             campaign.initial_subject = edited_subject
             campaign.initial_body = edited_body
             email_service.config_manager.update_campaign(campaign)
@@ -293,7 +293,7 @@ def show_draft_review_dialog(campaign, email_service, send_mode=SendMode.NORMAL.
             st.toast("Draft templates saved successfully!", icon="💾")
 
 
-@st.dialog("Emails Already Sent")
+@st.dialog("Warning: Emails Already Sent")
 def confirm_resend_dialog(campaign, email_service, analysis):
     """
     Shown instead of jumping straight to the draft review when one or more verified
@@ -304,8 +304,8 @@ def confirm_resend_dialog(campaign, email_service, analysis):
     never_sent = analysis["never_sent"]
 
     st.write(
-        f"**{len(already_sent)}** verified contact(s) already received this email at least once. "
-        f"**{len(never_sent)}** verified contact(s) have never been sent to."
+        f"**{len(already_sent)}** people have already received this email. "
+        f"**{len(never_sent)}** people have not received it yet."
     )
 
     if already_sent:
@@ -323,24 +323,24 @@ def confirm_resend_dialog(campaign, email_service, analysis):
 
     st.write("Do you want to send the emails again? Choose who should receive this send:")
 
-    mode_options = ["Only contacts already sent (resend)", "All verified contacts"]
+    mode_options = ["Only resend to people who already got it", "Send to everyone (including resending)"]
     mode_map = {
-        "Only contacts already sent (resend)": SendMode.RESEND_ONLY.value,
-        "All verified contacts": SendMode.ALL_VERIFIED.value,
+        "Only resend to people who already got it": SendMode.RESEND_ONLY.value,
+        "Send to everyone (including resending)": SendMode.ALL_VERIFIED.value,
     }
     if never_sent:
-        mode_options.insert(1, "Only new, never-sent verified contacts")
-        mode_map["Only new, never-sent verified contacts"] = SendMode.NORMAL.value
+        mode_options.insert(1, "Only send to new people who haven't received it")
+        mode_map["Only send to new people who haven't received it"] = SendMode.NORMAL.value
 
-    mode_label = st.radio("Target contacts:", mode_options)
+    mode_label = st.radio("Who should we send to?", mode_options)
     chosen_mode = mode_map[mode_label]
 
     col_yes, col_no = st.columns(2)
     with col_yes:
-        if st.button("Yes, Send Again", type="primary", use_container_width=True):
+        if st.button("Yes, Continue", type="primary", use_container_width=True):
             st.session_state["pending_send_mode"] = chosen_mode
             st.session_state["open_draft_review"] = True
             st.rerun()
     with col_no:
-        if st.button("No, Cancel", use_container_width=True):
+        if st.button("Cancel", use_container_width=True):
             st.rerun()

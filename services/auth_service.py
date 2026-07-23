@@ -53,6 +53,7 @@ class AuthService:
     def authenticate_interactive(self, port: int = 0) -> Optional[Credentials]:
         """
         Launches browser-based OAuth flow using client_secret.json.
+        Saves credentials to credentials/token_<email>.json and also token.json.
         """
         if not os.path.exists(self.client_secret_path):
             raise FileNotFoundError(
@@ -65,13 +66,107 @@ class AuthService:
         )
         creds = flow.run_local_server(port=port, prompt="consent", access_type="offline")
 
+        # Fetch email profile immediately to save named token
+        email = None
+        try:
+            service = build("gmail", "v1", credentials=creds)
+            profile = service.users().getProfile(userId="me").execute()
+            email = profile.get("emailAddress")
+        except Exception as e:
+            log_campaign_action("AuthService", status="WARNING", error=str(e), message="Failed to fetch email address during auth flow")
+
         os.makedirs(os.path.dirname(self.token_path), exist_ok=True)
+        
+        # Save to token.json
         with open(self.token_path, "w", encoding="utf-8") as token_file:
             token_file.write(creds.to_json())
 
+        # Save to token_<email>.json if email found
+        if email:
+            named_token_path = os.path.join(os.path.dirname(self.token_path), f"token_{email}.json")
+            with open(named_token_path, "w", encoding="utf-8") as token_file:
+                token_file.write(creds.to_json())
+
         self.credentials = creds
-        log_campaign_action("AuthService", status="SUCCESS", message="Interactive OAuth authentication completed")
+        log_campaign_action("AuthService", status="SUCCESS", message=f"Interactive OAuth authentication completed for {email or 'unknown user'}")
         return creds
+
+    def get_connected_accounts(self) -> list:
+        """
+        Scans credentials directory for token_*.json files and retrieves their email addresses and validity status.
+        """
+        import glob
+        connected = []
+        cred_dir = os.path.dirname(self.token_path)
+        pattern = os.path.join(cred_dir, "token_*.json")
+        token_files = glob.glob(pattern)
+
+        # Also check default token.json if it exists and hasn't been matched
+        default_token = self.token_path
+        if os.path.exists(default_token):
+            try:
+                creds = Credentials.from_authorized_user_file(default_token, GOOGLE_SCOPES)
+                service = build("gmail", "v1", credentials=creds)
+                profile = service.users().getProfile(userId="me").execute()
+                email = profile.get("emailAddress")
+                if email:
+                    named_token = os.path.join(cred_dir, f"token_{email}.json")
+                    if not os.path.exists(named_token):
+                        with open(named_token, "w", encoding="utf-8") as f:
+                            f.write(creds.to_json())
+                        if named_token not in token_files:
+                            token_files.append(named_token)
+            except Exception:
+                pass
+
+        seen_emails = set()
+        for tf in token_files:
+            filename = os.path.basename(tf)
+            email = filename[6:-5]  # remove 'token_' and '.json'
+            if email in seen_emails:
+                continue
+            seen_emails.add(email)
+            try:
+                creds = Credentials.from_authorized_user_file(tf, GOOGLE_SCOPES)
+                if creds.expired and creds.refresh_token:
+                    try:
+                        creds.refresh(Request())
+                        with open(tf, "w", encoding="utf-8") as f:
+                            f.write(creds.to_json())
+                    except Exception:
+                        pass
+                valid = creds.valid
+            except Exception:
+                valid = False
+
+            connected.append({
+                "email": email,
+                "token_path": tf,
+                "valid": valid
+            })
+        return connected
+
+    def disconnect_account(self, email: str) -> bool:
+        """Deletes the token file corresponding to the given email address."""
+        cred_dir = os.path.dirname(self.token_path)
+        named_token = os.path.join(cred_dir, f"token_{email}.json")
+        try:
+            if os.path.exists(named_token):
+                os.remove(named_token)
+            if os.path.exists(self.token_path):
+                try:
+                    creds = Credentials.from_authorized_user_file(self.token_path, GOOGLE_SCOPES)
+                    service = build("gmail", "v1", credentials=creds)
+                    profile = service.users().getProfile(userId="me").execute()
+                    if profile.get("emailAddress") == email:
+                        os.remove(self.token_path)
+                except Exception:
+                    pass
+            log_campaign_action("AuthService", status="SUCCESS", message=f"Disconnected Google account: {email}")
+            return True
+        except Exception as e:
+            log_campaign_action("AuthService", status="ERROR", error=str(e), message=f"Failed to disconnect account {email}")
+            return False
 
     def get_user_profile(self) -> Dict[str, Any]:
         email = self.get_user_email()

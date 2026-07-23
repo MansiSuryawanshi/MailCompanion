@@ -32,8 +32,8 @@ def render_dashboard(
     config_manager: ConfigManager,
     auth_service: AuthService,
 ):
-    st.title("📊 Campaign Overview & Health Dashboard")
-    st.caption("Real-time monitoring of connection health, campaign metrics, and system activity.")
+    st.title("📊 Campaign Status & Performance")
+    st.caption("See how your email outreach is doing and check connections.")
 
     active_campaign = config_manager.get_active_campaign()
     sp_id = active_campaign.spreadsheet_id
@@ -42,30 +42,30 @@ def render_dashboard(
     gmail_provider = GmailProvider(auth_service) if auth_service.get_credentials() else None
 
     # Top Bar: Connection Health Indicators
-    st.subheader("🔌 System Health & Status")
+    st.subheader("🔌 Connection Status")
     col1, col2, col3, col4, col5 = st.columns(5)
 
     auth_status = auth_service.get_auth_status()
     with col1:
-        st.metric("Google OAuth", auth_status["status"], help=auth_status.get("email"))
+        st.metric("Google Login", auth_status["status"], help=auth_status.get("email"))
 
     with col2:
         if sheets_service and sp_id:
             sh_status = sheets_service.get_connection_status()
-            st.metric("Google Sheet", sh_status["status"], help=sh_status.get("title", ""))
+            st.metric("Spreadsheet Source", sh_status["status"], help=sh_status.get("title", ""))
         else:
-            st.metric("Google Sheet", "No Sheet URL", delta="-", help="Configure Sheet URL in settings")
+            st.metric("Spreadsheet Source", "No Sheet Link", delta="-", help="Configure Sheet URL in settings")
 
     with col3:
         if gmail_provider:
             gm_status = gmail_provider.test_connection()
-            st.metric("Gmail API", gm_status["status"], help=gm_status.get("email"))
+            st.metric("Gmail Connection", gm_status["status"], help=gm_status.get("email"))
         else:
-            st.metric("Gmail API", "Disconnected", delta="-")
+            st.metric("Gmail Connection", "Disconnected", delta="-")
 
     with col4:
         sched_status = global_scheduler.get_status()
-        st.metric("Scheduler", sched_status["status"], help=f"Next Run: {sched_status.get('next_run')}")
+        st.metric("Auto-Scheduler", sched_status["status"], help=f"Next Run: {sched_status.get('next_run')}")
 
     with col5:
         last_sync = active_campaign.last_sync_time or "Never"
@@ -74,41 +74,41 @@ def render_dashboard(
                 last_sync = datetime.fromisoformat(last_sync).strftime("%H:%M:%S")
             except Exception:
                 pass
-        st.metric("Last Sync", last_sync)
+        st.metric("Last Sync with Sheet", last_sync)
 
-    @st.dialog("Do you want to send again?")
+    @st.dialog("Do you want to restart sending?")
     def confirm_reset_dialog():
-        st.write(f"Are you sure you want to reset all mails for campaign **{active_campaign.name}**?")
-        st.write("This will clear email sent dates, follow-up sent dates, last errors, attempt counts, next follow-up dates, and message/thread IDs.")
-        st.write("The status will return to **Pending** so you can start sending them again.")
+        st.write(f"Are you sure you want to clear the sent status for all contacts in campaign **{active_campaign.name}**?")
+        st.write("This will clear the record of sent emails, follow-ups, and errors.")
+        st.write("All contacts will go back to being ready to receive emails.")
         
         col_yes, col_no = st.columns(2)
         with col_yes:
-            if st.button("Yes, Reset", type="primary", use_container_width=True):
+            if st.button("Yes, Clear & Restart", type="primary", use_container_width=True):
                 email_service = EmailService(gmail_provider, sheets_service, config_manager)
-                with st.spinner("Resetting campaign mails..."):
+                with st.spinner("Clearing sending records..."):
                     email_service.reset_campaign(active_campaign)
-                st.toast("Campaign mails reset successfully!", icon="🔄")
+                st.toast("Outreach records cleared successfully!", icon="🔄")
                 st.rerun()
         with col_no:
             if st.button("No, Cancel", use_container_width=True):
                 st.rerun()
 
     # Quick Action Buttons
-    st.subheader("🚀 Quick Actions")
+    st.subheader("🚀 Daily Actions")
     qcol1, qcol2, qcol3, qcol4, qcol5, qcol6 = st.columns(6)
 
     with qcol1:
-        if st.button("🔑 Connect Google", use_container_width=True):
+        if st.button("🔑 Log In with Google", use_container_width=True):
             try:
                 auth_service.authenticate_interactive()
-                st.success("Google Account authenticated!")
+                st.success("Logged in with Google successfully!")
                 st.rerun()
             except Exception as e:
                 st.error(f"Auth error: {e}")
 
     with qcol2:
-        if st.button("🔄 Sync Sheet", use_container_width=True):
+        if st.button("🔄 Sync Spreadsheet", use_container_width=True):
             if sheets_service and sheets_service.connect():
                 if active_campaign.data_source == "sqlite":
                     try:
@@ -116,23 +116,23 @@ def render_dashboard(
                         if sheet_contacts:
                             db_service = DBService()
                             db_service.import_contacts(active_campaign.id, sheet_contacts, overwrite=False)
-                            st.toast(f"Synchronized {len(sheet_contacts)} contacts to database!", icon="✅")
+                            st.toast(f"Imported {len(sheet_contacts)} people from spreadsheet!", icon="✅")
                         else:
                             st.toast("Google Sheet is empty.", icon="⚠️")
                     except Exception as e:
                         st.error(f"Failed to sync contacts: {e}")
                 else:
-                    st.toast("Google Sheet synchronized!", icon="✅")
+                    st.toast("Spreadsheet synced successfully!", icon="✅")
                 active_campaign.last_sync_time = datetime.now().isoformat()
                 config_manager.update_campaign(active_campaign)
                 st.rerun()
             else:
-                st.error("Failed to connect to Google Sheet.")
+                st.error("Could not load Google Sheet. Please check the link.")
 
     # Check if we should execute send campaign from dialog confirmation
     if st.session_state.get("execute_send_campaign"):
         if not sheets_service or not gmail_provider:
-            st.error("Authenticate Google & configure Sheet URL first.")
+            st.error("Please connect to Google and configure your spreadsheet link first.")
         else:
             email_service = EmailService(gmail_provider, sheets_service, config_manager)
             send_mode = st.session_state.get("send_mode", SendMode.NORMAL.value)
@@ -149,16 +149,16 @@ def render_dashboard(
         del st.session_state["open_draft_review"]
         confirmed_mode = st.session_state.pop("pending_send_mode", SendMode.NORMAL.value)
         if not sheets_service or not gmail_provider:
-            st.error("Authenticate Google & configure Sheet URL first.")
+            st.error("Please connect to Google and configure your spreadsheet link first.")
         else:
             email_service = EmailService(gmail_provider, sheets_service, config_manager)
             from ui.composer import show_draft_review_dialog
             show_draft_review_dialog(active_campaign, email_service, send_mode=confirmed_mode)
 
     with qcol3:
-        if st.button("✉️ Send Emails Now", use_container_width=True, type="primary"):
+        if st.button("✉️ Start Sending Emails", use_container_width=True, type="primary"):
             if not sheets_service or not gmail_provider:
-                st.error("Authenticate Google & configure Sheet URL first.")
+                st.error("Please connect to Google and configure your spreadsheet link first.")
             else:
                 email_service = EmailService(gmail_provider, sheets_service, config_manager)
                 from ui.composer import show_draft_review_dialog, confirm_resend_dialog
@@ -169,9 +169,9 @@ def render_dashboard(
                     show_draft_review_dialog(active_campaign, email_service, send_mode=SendMode.NORMAL.value)
 
     with qcol4:
-        if st.button("🔔 Check Follow-ups", use_container_width=True):
+        if st.button("🔔 Check & Send Follow-ups", use_container_width=True):
             if not sheets_service or not gmail_provider:
-                st.error("Authenticate Google & configure Sheet URL first.")
+                st.error("Please connect to Google and configure your spreadsheet link first.")
             else:
                 email_service = EmailService(gmail_provider, sheets_service, config_manager)
                 followup_service = FollowupService(gmail_provider, sheets_service, email_service, config_manager)
@@ -181,17 +181,17 @@ def render_dashboard(
                     st.rerun()
 
     with qcol5:
-        if st.button("🔄 Reset Mails", use_container_width=True):
+        if st.button("🔄 Restart Campaign Status", use_container_width=True):
             confirm_reset_dialog()
 
     with qcol6:
-        if st.button("🔄 Refresh Dashboard", use_container_width=True):
+        if st.button("🔄 Refresh Stats", use_container_width=True):
             st.rerun()
 
     st.divider()
 
     # Active Campaign & Analytics Metrics
-    st.subheader(f"📈 Campaign Metrics: '{active_campaign.name}'")
+    st.subheader(f"📈 Campaign Performance: '{active_campaign.name}'")
 
     contacts = []
     if active_campaign.data_source == "sqlite":
@@ -227,22 +227,22 @@ def render_dashboard(
 
     mcol1, mcol2, mcol3, mcol4 = st.columns(4)
     with mcol1:
-        st.metric("Total Contacts", total_contacts)
-        st.metric("Verified Contacts", verified_count)
+        st.metric("Total People", total_contacts)
+        st.metric("Valid Email Addresses", verified_count)
     with mcol2:
-        st.metric("Pending Emails", pending_count)
-        st.metric("Emails Sent", sent_count)
+        st.metric("Ready to Send", pending_count)
+        st.metric("Initial Emails Sent", sent_count)
     with mcol3:
         st.metric("Follow-ups Sent", followup_count)
-        st.metric("Responses Received", responses_count)
+        st.metric("Replies Received", responses_count)
     with mcol4:
-        st.metric("Failed Emails", failed_count)
-        st.metric("Success Rate", f"{round(success_rate, 1)}%")
+        st.metric("Failed to Send", failed_count)
+        st.metric("Delivery Success Rate", f"{round(success_rate, 1)}%")
 
     st.divider()
 
     # Campaign Contact List
-    st.subheader("👥 Campaign Contact List")
+    st.subheader("👥 Recipients Status")
     if contacts:
         df_contacts = pd.DataFrame(contacts)
         display_cols = [c for c in [
@@ -256,7 +256,7 @@ def render_dashboard(
     st.divider()
 
     # Recent Activity Stream
-    st.subheader("📋 Recent Activity Stream")
+    st.subheader("📋 Recent Activity Log")
     logs_df = get_logs_dataframe()
     if not logs_df.empty:
         st.dataframe(

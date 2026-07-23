@@ -283,6 +283,60 @@ class TestEmailCampaignManager(unittest.TestCase):
             except Exception:
                 pass
 
+    def test_custom_scheduler_logic(self):
+        from scheduler import CampaignScheduler
+        from datetime import datetime
+        
+        sched = CampaignScheduler()
+        
+        # Test daily mode
+        settings_daily = {"scheduler_mode": "daily"}
+        t1 = datetime(2026, 7, 23, 10, 0, 0)
+        self.assertTrue(sched.is_scheduled_date(t1, settings_daily))
+        
+        # Test weekdays mode
+        settings_weekdays = {
+            "scheduler_mode": "weekdays",
+            "scheduler_weekdays": ["Monday", "Wednesday", "Friday"]
+        }
+        mon = datetime(2026, 7, 20, 10, 0, 0) # Monday
+        tue = datetime(2026, 7, 21, 10, 0, 0) # Tuesday
+        self.assertTrue(sched.is_scheduled_date(mon, settings_weekdays))
+        self.assertFalse(sched.is_scheduled_date(tue, settings_weekdays))
+        
+        # Test specific dates mode
+        settings_dates = {
+            "scheduler_mode": "dates",
+            "scheduler_dates": ["2026-07-24", "2026-07-26"]
+        }
+        self.assertTrue(sched.is_scheduled_date(datetime(2026, 7, 24, 12, 0, 0), settings_dates))
+        self.assertFalse(sched.is_scheduled_date(datetime(2026, 7, 25, 12, 0, 0), settings_dates))
+        
+        # Test interval mode
+        settings_interval = {
+            "scheduler_mode": "interval",
+            "scheduler_interval_gap": 2, # every 3 days
+            "scheduler_interval_start": "2026-07-20"
+        }
+        self.assertTrue(sched.is_scheduled_date(datetime(2026, 7, 20, 10, 0, 0), settings_interval)) # day 0
+        self.assertFalse(sched.is_scheduled_date(datetime(2026, 7, 21, 10, 0, 0), settings_interval)) # day 1
+        self.assertFalse(sched.is_scheduled_date(datetime(2026, 7, 22, 10, 0, 0), settings_interval)) # day 2
+        self.assertTrue(sched.is_scheduled_date(datetime(2026, 7, 23, 10, 0, 0), settings_interval)) # day 3
+        
+        # Test calculate_next_run
+        settings_next = {
+            "scheduler_enabled": True,
+            "scheduler_time": "10:00",
+            "scheduler_mode": "weekdays",
+            "scheduler_weekdays": ["Monday", "Wednesday"]
+        }
+        # 2026-07-20 is Monday, 2026-07-19 is Sunday
+        start_sun = datetime(2026, 7, 19, 15, 0, 0)
+        next_run = sched.calculate_next_run(start_sun, settings_next)
+        self.assertIsNotNone(next_run)
+        # Should run on Monday 2026-07-20 at 10:00
+        self.assertEqual(next_run.strftime("%Y-%m-%d %H:%M:%S"), "2026-07-20 10:00:00")
+
 
 if __name__ == "__main__":
     unittest.main()

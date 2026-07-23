@@ -17,7 +17,7 @@ from ui.settings import render_settings
 
 # Set Page Config
 st.set_page_config(
-    page_title="Automated Email Campaign Manager",
+    page_title="Mail Automation Assistant",
     page_icon="📧",
     layout="wide",
     initial_sidebar_state="expanded",
@@ -54,7 +54,14 @@ st.markdown("""
 def main():
     # Initialize Core Services & Managers
     config_manager = ConfigManager()
-    auth_service = AuthService()
+    
+    # Resolve dynamic token path based on active campaign sender email or global setting
+    from constants import TOKEN_FILE
+    active_campaign = config_manager.get_active_campaign()
+    sender_email = getattr(active_campaign, "sender_email", None) or config_manager.settings.get("active_sender_email")
+    token_path = f"credentials/token_{sender_email}.json" if sender_email else TOKEN_FILE
+    
+    auth_service = AuthService(token_path=token_path)
 
     # Launch Scheduler if configured
     if config_manager.settings.get("scheduler_enabled") and not global_scheduler.get_status()["is_running"]:
@@ -62,47 +69,47 @@ def main():
         global_scheduler.start(sched_time)
 
     # Sidebar Navigation
-    st.sidebar.title("📧 Campaign Manager")
+    st.sidebar.title("📧 Mail Automation")
     active_campaign = config_manager.get_active_campaign()
     st.sidebar.caption(f"Active Campaign: **{active_campaign.name}**")
-    st.sidebar.caption(f"State: **{active_campaign.state}**")
+    st.sidebar.caption(f"Status: **{active_campaign.state}**")
 
     st.sidebar.divider()
 
     page = st.sidebar.radio(
         "Navigation Menu",
         [
-            "📊 Dashboard",
-            "🎯 Campaigns",
-            "✍️ Email Composer",
-            "📇 Contacts",
-            "📈 Analytics",
-            "📜 Logs",
-            "⚙️ Settings",
+            "📊 Status Overview",
+            "🎯 Setup Campaigns",
+            "✍️ Message Templates",
+            "📇 People & Contacts",
+            "📈 Performance Charts",
+            "📜 Activity History",
+            "⚙️ Settings & Setup",
         ],
     )
 
     st.sidebar.divider()
     st.sidebar.markdown("### 💡 Quick Status")
     auth_status = auth_service.get_auth_status()
-    st.sidebar.markdown(f"**Google Auth:** `{auth_status['status']}`")
+    st.sidebar.markdown(f"**Google Account:** `{auth_status['status']}`")
     sched_info = global_scheduler.get_status()
-    st.sidebar.markdown(f"**Scheduler:** `{sched_info['status']}`")
+    st.sidebar.markdown(f"**Auto-Sending:** `{sched_info['status']}`")
 
     # Page Router
-    if page == "📊 Dashboard":
+    if page == "📊 Status Overview":
         render_dashboard(config_manager, auth_service)
-    elif page == "🎯 Campaigns":
+    elif page == "🎯 Setup Campaigns":
         render_campaigns(config_manager)
-    elif page == "✍️ Email Composer":
+    elif page == "✍️ Message Templates":
         render_composer(config_manager, auth_service)
-    elif page == "📇 Contacts":
+    elif page == "📇 People & Contacts":
         render_contacts(config_manager, auth_service)
-    elif page == "📈 Analytics":
+    elif page == "📈 Performance Charts":
         render_analytics(config_manager, auth_service)
-    elif page == "📜 Logs":
+    elif page == "📜 Activity History":
         render_logs()
-    elif page == "⚙️ Settings":
+    elif page == "⚙️ Settings & Setup":
         render_settings(config_manager, auth_service)
 
 

@@ -42,11 +42,19 @@ def main():
     
     while True:
         try:
-            # Check next run time from scheduler
-            job = campaign_scheduler.scheduler.get_job(campaign_scheduler.job_id)
-            next_run = "None"
-            if job and job.next_run_time:
-                next_run = job.next_run_time.strftime("%Y-%m-%d %H:%M:%S")
+            # Reload configuration to check for scheduler settings changes
+            config_manager.reload()
+            current_sched_time = config_manager.settings.get("scheduler_time", "10:00")
+            
+            # If the scheduled daily execution time changes, restart scheduler locally with new trigger
+            if current_sched_time != sched_time:
+                sched_time = current_sched_time
+                campaign_scheduler.start(sched_time)
+                log_campaign_action("SchedulerDaemon", status="INFO", message=f"Scheduler dynamic execution time updated to {sched_time}.")
+
+            # Calculate true next run time instead of standard APScheduler trigger time
+            next_run_dt = campaign_scheduler.calculate_next_run(datetime.now(), config_manager.settings)
+            next_run = next_run_dt.strftime("%Y-%m-%d %H:%M:%S") if next_run_dt else "None"
             
             update_status(pid, sched_time, next_run, True)
         except Exception as e:

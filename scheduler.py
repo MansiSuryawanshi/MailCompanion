@@ -5,7 +5,7 @@ import os
 import json
 import threading
 import time
-from datetime import datetime
+from datetime import datetime, timedelta
 from typing import Any, Dict, Optional, Tuple
 from apscheduler.schedulers.background import BackgroundScheduler
 from apscheduler.triggers.cron import CronTrigger
@@ -34,12 +34,23 @@ class CampaignScheduler:
         log_campaign_action("SchedulerJob", status="INFO", message="Starting scheduled campaign automation run...")
 
         try:
-            auth_service = AuthService()
-            if not auth_service.get_credentials():
-                log_campaign_action("SchedulerJob", status="WARNING", error="Scheduler skipped run: OAuth credentials missing or invalid.")
+            self.config_manager.reload()
+            
+            # Check if today matches custom schedule
+            if not self.is_scheduled_date(datetime.now(), self.config_manager.settings):
+                log_campaign_action("SchedulerJob", status="INFO", message="Scheduler skipped run: today is not a scheduled run day according to custom schedule settings.")
                 return
 
+            from constants import TOKEN_FILE
             active_campaign = self.config_manager.get_active_campaign()
+            
+            sender_email = getattr(active_campaign, "sender_email", None) or self.config_manager.settings.get("active_sender_email")
+            token_path = f"credentials/token_{sender_email}.json" if sender_email else TOKEN_FILE
+            
+            auth_service = AuthService(token_path=token_path)
+            if not auth_service.get_credentials():
+                log_campaign_action("SchedulerJob", status="WARNING", error=f"Scheduler skipped run: OAuth credentials missing or invalid for {sender_email or 'default'}.")
+                return
             if active_campaign.state != "Running":
                 log_campaign_action("SchedulerJob", status="INFO", message=f"Scheduler skipped run: Campaign '{active_campaign.name}' state is '{active_campaign.state}'")
                 return
@@ -221,12 +232,73 @@ class CampaignScheduler:
             log_campaign_action("CampaignScheduler", status="INFO", message="Background scheduler daemon stopped.")
             return True
 
+    def is_scheduled_date(self, date_to_check: datetime, settings: dict) -> bool:
+        """Determines if a given datetime is a scheduled run day."""
+        mode = settings.get("scheduler_mode", "daily")
+        if mode == "daily":
+            return True
+            
+        elif mode == "weekdays":
+            weekdays = settings.get("scheduler_weekdays", [])
+            if not weekdays:
+                return True
+            weekday_name = date_to_check.strftime("%A")  # "Monday", "Tuesday", etc.
+            return weekday_name in weekdays
+            
+        elif mode == "dates":
+            scheduled_dates = settings.get("scheduler_dates", [])
+            date_str = date_to_check.strftime("%Y-%m-%d")
+            return date_str in scheduled_dates
+            
+        elif mode == "interval":
+            try:
+                gap = int(settings.get("scheduler_interval_gap", 1))
+            except ValueError:
+                gap = 1
+            start_str = settings.get("scheduler_interval_start", "")
+            if not start_str:
+                return True
+            try:
+                start_date = datetime.strptime(start_str, "%Y-%m-%d").date()
+                diff_days = (date_to_check.date() - start_date).days
+                if diff_days < 0:
+                    return False
+                return diff_days % (gap + 1) == 0
+            except Exception:
+                return True
+                
+        return True
+
+    def calculate_next_run(self, start_from: datetime, settings: dict) -> Optional[datetime]:
+        """Calculates the true next scheduled run date and time."""
+        if not settings.get("scheduler_enabled", False):
+            return None
+            
+        sched_time_str = settings.get("scheduler_time", "10:00")
+        try:
+            hour, minute = map(int, sched_time_str.split(":"))
+        except ValueError:
+            hour, minute = 10, 0
+            
+        # Start checking candidate days starting today
+        candidate = start_from.replace(hour=hour, minute=minute, second=0, microsecond=0)
+        
+        for i in range(365):
+            test_date = candidate + timedelta(days=i)
+            # If candidate is in the past relative to start_from, skip it
+            if test_date <= start_from:
+                continue
+            if self.is_scheduled_date(test_date, settings):
+                return test_date
+                
+        return None
+
     def get_status(self) -> Dict[str, Any]:
         """Returns status indicator dict for UI dashboard."""
         if os.environ.get("SCHEDULER_DAEMON") == "1":
             # Local status (inside daemon)
-            job = self.scheduler.get_job(self.job_id) if self.scheduler.running else None
-            next_run = str(job.next_run_time.strftime("%Y-%m-%d %H:%M:%S")) if job and job.next_run_time else "None"
+            next_run_dt = self.calculate_next_run(datetime.now(), self.config_manager.settings)
+            next_run = next_run_dt.strftime("%Y-%m-%d %H:%M:%S") if next_run_dt else "None"
             return {
                 "is_running": self._is_running and self.scheduler.running,
                 "status": "Active" if (self._is_running and self.scheduler.running) else "Inactive",

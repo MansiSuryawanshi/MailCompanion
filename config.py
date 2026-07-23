@@ -72,6 +72,7 @@ class Campaign:
     draft_mode: bool = False
     data_source: str = "sqlite"  # "sqlite" or "google_sheets"
     state: str = CampaignState.DRAFT.value
+    sender_email: str = ""
     created_at: str = field(default_factory=lambda: datetime.now().isoformat())
     last_sync_time: str = ""
     last_email_sent_time: str = ""
@@ -267,3 +268,8 @@ class ConfigManager:
         except Exception as e:
             print(f"Error importing configuration: {e}")
             return False
+
+    def reload(self) -> None:
+        """Reload settings and campaigns from disk."""
+        self.settings = self._load_settings()
+        self.campaigns = self._load_campaigns()

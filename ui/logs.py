@@ -7,16 +7,16 @@ from utils.logger import export_logs_to_csv, get_logs_dataframe
 
 
 def render_logs():
-    st.title("📜 Application & Campaign Activity Logs")
-    st.caption("View real-time event logs, execution times, retry counts, and export log reports.")
+    st.title("📜 Recent Activity Log")
+    st.caption("View the detail log of sent emails and system events.")
 
     df = get_logs_dataframe()
 
     col1, col2 = st.columns([2, 1])
     with col1:
-        search_query = st.text_input("🔍 Search Logs:", placeholder="Filter by email, action, error...").strip().lower()
+        search_query = st.text_input("🔍 Search logs:", placeholder="Filter by email, action, error...").strip().lower()
     with col2:
-        level_filter = st.selectbox("Log Level:", ["ALL", "INFO", "WARNING", "ERROR"])
+        level_filter = st.selectbox("Show severity level:", ["ALL", "INFO", "WARNING", "ERROR"])
 
     filtered_df = df.copy()
     if not filtered_df.empty:
@@ -38,7 +38,7 @@ def render_logs():
 
     csv_data = export_logs_to_csv()
     st.download_button(
-        label="📥 Download Campaign Logs CSV",
+        label="📥 Download full logs as CSV file",
         data=csv_data,
         file_name="campaign_activity_logs.csv",
         mime="text/csv",
