@@ -135,6 +135,26 @@ class SheetsService:
             log_campaign_action("SheetsService", status="ERROR", error=str(e), message="Error reading sheet contacts")
             return []
 
+    def ensure_column(self, col_name: str) -> int:
+        """
+        Ensures a column exists in the sheet header row, creating it (appended at the
+        end) if missing. Used for dynamically-named resend columns (e.g. "Email Sent
+        Date & Time 2") that aren't part of the fixed AUTOMATIC_COLUMNS list.
+        Returns the column's 1-based index.
+        """
+        if col_name in self.header_map:
+            return self.header_map[col_name]
+
+        if not self.worksheet:
+            if not self.connect():
+                raise RuntimeError("Cannot connect to worksheet to add column")
+
+        next_idx = max(self.header_map.values(), default=0) + 1
+        self.worksheet.update_cell(1, next_idx, col_name)
+        self.header_map[col_name] = next_idx
+        log_campaign_action("SheetsService", status="INFO", message=f"Added new column '{col_name}' at index {next_idx}")
+        return next_idx
+
     def queue_row_update(self, row_number: int, updates: Dict[str, Any]) -> None:
         """
         Queues cell updates for application-owned columns.

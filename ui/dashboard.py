@@ -15,6 +15,7 @@ from constants import (
     COL_STATUS,
     COL_VERIFIED,
     CampaignStatus,
+    SendMode,
 )
 from services.auth_service import AuthService
 from services.email_service import EmailService
@@ -134,11 +135,25 @@ def render_dashboard(
             st.error("Authenticate Google & configure Sheet URL first.")
         else:
             email_service = EmailService(gmail_provider, sheets_service, config_manager)
+            send_mode = st.session_state.get("send_mode", SendMode.NORMAL.value)
             with st.spinner("Processing email batch..."):
-                res = email_service.execute_campaign_batch(active_campaign)
+                res = email_service.execute_campaign_batch(active_campaign, send_mode=send_mode)
                 st.success(res.get("message"))
                 del st.session_state["execute_send_campaign"]
+                if "send_mode" in st.session_state:
+                    del st.session_state["send_mode"]
                 st.rerun()
+
+    # Check if a resend was just confirmed -> open the draft review dialog for it
+    if st.session_state.get("open_draft_review"):
+        del st.session_state["open_draft_review"]
+        confirmed_mode = st.session_state.pop("pending_send_mode", SendMode.NORMAL.value)
+        if not sheets_service or not gmail_provider:
+            st.error("Authenticate Google & configure Sheet URL first.")
+        else:
+            email_service = EmailService(gmail_provider, sheets_service, config_manager)
+            from ui.composer import show_draft_review_dialog
+            show_draft_review_dialog(active_campaign, email_service, send_mode=confirmed_mode)
 
     with qcol3:
         if st.button("✉️ Send Emails Now", use_container_width=True, type="primary"):
@@ -146,8 +161,12 @@ def render_dashboard(
                 st.error("Authenticate Google & configure Sheet URL first.")
             else:
                 email_service = EmailService(gmail_provider, sheets_service, config_manager)
-                from ui.composer import show_draft_review_dialog
-                show_draft_review_dialog(active_campaign, email_service, retry_failed=False)
+                from ui.composer import show_draft_review_dialog, confirm_resend_dialog
+                analysis = email_service.analyze_resend_state(active_campaign)
+                if analysis["already_sent"]:
+                    confirm_resend_dialog(active_campaign, email_service, analysis)
+                else:
+                    show_draft_review_dialog(active_campaign, email_service, send_mode=SendMode.NORMAL.value)
 
     with qcol4:
         if st.button("🔔 Check Follow-ups", use_container_width=True):

@@ -327,11 +327,27 @@ class DBService:
             set_clauses = ["last_updated = ?"]
             params = [now_iso]
 
+            unmapped = {}
             for key, val in updates.items():
                 if key in field_map:
                     col_name = field_map[key]
                     set_clauses.append(f"{col_name} = ?")
                     params.append(val)
+                elif key != "_db_id":
+                    unmapped[key] = val
+
+            if unmapped:
+                cursor.execute("SELECT extra_json FROM contacts WHERE id = ?", (db_id,))
+                existing = cursor.fetchone()
+                extra = {}
+                if existing and existing["extra_json"]:
+                    try:
+                        extra = json.loads(existing["extra_json"])
+                    except Exception:
+                        extra = {}
+                extra.update({k: str(v) for k, v in unmapped.items()})
+                set_clauses.append("extra_json = ?")
+                params.append(json.dumps(extra))
 
             params.append(db_id)
             query = f"UPDATE contacts SET {', '.join(set_clauses)} WHERE id = ?"

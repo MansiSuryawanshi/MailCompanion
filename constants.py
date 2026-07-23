@@ -21,6 +21,12 @@ class CampaignState(str, Enum):
     COMPLETED = "Completed"
     ARCHIVED = "Archived"
 
+class SendMode(str, Enum):
+    NORMAL = "normal"              # first-time sends only (never sent before)
+    RETRY_FAILED = "retry_failed"  # only contacts whose last attempt failed
+    RESEND_ONLY = "resend_only"    # only contacts already sent before (resend)
+    ALL_VERIFIED = "all_verified"  # every eligible verified contact, sent or not
+
 # Required User Source Columns
 COL_FIRST_NAME = "First Name"
 COL_EMAIL = "Email"

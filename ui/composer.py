@@ -4,8 +4,9 @@ ui/composer.py - Email Composer, Template Editor, Live Preview, Dry-Run & Execut
 import streamlit as st
 import streamlit.components.v1 as components
 from config import ConfigManager
+from constants import SendMode
 from services.auth_service import AuthService
-from services.email_service import EmailService
+from services.email_service import EmailService, format_elapsed
 from services.gmail_provider import GmailProvider
 from services.sheets_service import SheetsService
 from utils.logger import get_logs_dataframe
@@ -147,7 +148,7 @@ def render_composer(config_manager: ConfigManager, auth_service: AuthService):
                 st.error("Google Auth and valid Sheet URL required.")
             else:
                 email_service = EmailService(gmail_provider, sheets_service, config_manager)
-                retry_failed_only = st.session_state.get("retry_failed_emails", False)
+                send_mode = st.session_state.get("send_mode", SendMode.NORMAL.value)
 
                 progress_bar = st.progress(0.0)
                 status_text = st.empty()
@@ -163,29 +164,46 @@ def render_composer(config_manager: ConfigManager, auth_service: AuthService):
 
                 with st.spinner("Dispatching campaign..."):
                     res = email_service.execute_campaign_batch(
-                        active_campaign, progress_callback=update_progress, retry_failed_only=retry_failed_only
+                        active_campaign, progress_callback=update_progress, send_mode=send_mode
                     )
 
                 progress_bar.progress(1.0)
                 st.success(res["message"])
                 del st.session_state["execute_send_campaign"]
-                if "retry_failed_emails" in st.session_state:
-                    del st.session_state["retry_failed_emails"]
+                if "send_mode" in st.session_state:
+                    del st.session_state["send_mode"]
                 st.rerun()
 
-        if st.button("🔥 START CAMPAIGN SEND NOW", type="primary", use_container_width=True):
+        # Check if a resend was just confirmed -> open the draft review dialog for it
+        if st.session_state.get("open_draft_review"):
+            del st.session_state["open_draft_review"]
+            confirmed_mode = st.session_state.pop("pending_send_mode", SendMode.NORMAL.value)
             if not sheets_service or not gmail_provider or not sp_id:
                 st.error("Google Auth and valid Sheet URL required.")
             else:
                 email_service = EmailService(gmail_provider, sheets_service, config_manager)
-                show_draft_review_dialog(active_campaign, email_service, retry_failed=retry_failed)
+                show_draft_review_dialog(active_campaign, email_service, send_mode=confirmed_mode)
+
+        if st.button("🔥 START CAMPAIGN SEND NOW", type="primary", use_container_width=True):
+            if not sheets_service or not gmail_provider or not sp_id:
+                st.error("Google Auth and valid Sheet URL required.")
+            elif retry_failed:
+                email_service = EmailService(gmail_provider, sheets_service, config_manager)
+                show_draft_review_dialog(active_campaign, email_service, send_mode=SendMode.RETRY_FAILED.value)
+            else:
+                email_service = EmailService(gmail_provider, sheets_service, config_manager)
+                analysis = email_service.analyze_resend_state(active_campaign)
+                if analysis["already_sent"]:
+                    confirm_resend_dialog(active_campaign, email_service, analysis)
+                else:
+                    show_draft_review_dialog(active_campaign, email_service, send_mode=SendMode.NORMAL.value)
 
 
 @st.dialog("Review Draft Email")
-def show_draft_review_dialog(campaign, email_service, retry_failed=False):
-    st.write("Review the draft email for the first pending contact before dispatching the campaign:")
+def show_draft_review_dialog(campaign, email_service, send_mode=SendMode.NORMAL.value):
+    st.write("Review the draft email for the first matching contact before dispatching the campaign:")
 
-    # Retrieve contacts to preview the first pending email
+    # Retrieve contacts to preview the first matching email
     try:
         contacts = email_service.get_contacts(campaign)
     except Exception as e:
@@ -193,21 +211,30 @@ def show_draft_review_dialog(campaign, email_service, retry_failed=False):
         return
 
     from utils.validator import evaluate_contact_row
-    from constants import COL_EMAIL, COL_FIRST_NAME, COL_VERIFIED, COL_STATUS, COL_EMAIL_SENT_DATE, CampaignStatus
+    from constants import COL_EMAIL, COL_FIRST_NAME, COL_VERIFIED, COL_STATUS, CampaignStatus
+    from services.email_service import resolve_last_sent_info
 
     seen_emails = set()
     first_pending_contact = None
     for row in contacts:
         eval_res = evaluate_contact_row(row, seen_emails)
-        sent_date = str(row.get(COL_EMAIL_SENT_DATE, "") or "").strip()
         status = str(row.get(COL_STATUS, "") or "").strip()
+        is_already_sent = bool(resolve_last_sent_info(row)) or status in (CampaignStatus.SENT.value, CampaignStatus.FOLLOWUP_SENT.value)
 
-        if retry_failed:
+        if send_mode == SendMode.RETRY_FAILED.value:
             if status == CampaignStatus.FAILED.value:
                 first_pending_contact = row
                 break
+        elif send_mode == SendMode.RESEND_ONLY.value:
+            if eval_res["can_send"] and is_already_sent:
+                first_pending_contact = row
+                break
+        elif send_mode == SendMode.ALL_VERIFIED.value:
+            if eval_res["can_send"]:
+                first_pending_contact = row
+                break
         else:
-            if eval_res["can_send"] and not sent_date and status not in (CampaignStatus.SENT.value, CampaignStatus.FOLLOWUP_SENT.value):
+            if eval_res["can_send"] and not is_already_sent:
                 first_pending_contact = row
                 break
 
@@ -256,7 +283,7 @@ def show_draft_review_dialog(campaign, email_service, retry_failed=False):
             email_service.config_manager.update_campaign(campaign)
 
             st.session_state["execute_send_campaign"] = True
-            st.session_state["retry_failed_emails"] = retry_failed
+            st.session_state["send_mode"] = send_mode
             st.rerun()
     with col2:
         if st.button("✏️ Save & Keep Editing", use_container_width=True):
@@ -264,3 +291,56 @@ def show_draft_review_dialog(campaign, email_service, retry_failed=False):
             campaign.initial_body = edited_body
             email_service.config_manager.update_campaign(campaign)
             st.toast("Draft templates saved successfully!", icon="💾")
+
+
+@st.dialog("Emails Already Sent")
+def confirm_resend_dialog(campaign, email_service, analysis):
+    """
+    Shown instead of jumping straight to the draft review when one or more verified
+    contacts have already been sent this campaign's email at least once. Lets the user
+    see how long it's been since each contact's last send and choose who to (re)send to.
+    """
+    already_sent = analysis["already_sent"]
+    never_sent = analysis["never_sent"]
+
+    st.write(
+        f"**{len(already_sent)}** verified contact(s) already received this email at least once. "
+        f"**{len(never_sent)}** verified contact(s) have never been sent to."
+    )
+
+    if already_sent:
+        st.markdown("**Time since last send:**")
+        preview_rows = [
+            {
+                "Email": c["email"],
+                "First Name": c["first_name"],
+                "Last Sent At": c["last_sent_at"],
+                "Elapsed": format_elapsed(c["elapsed_seconds"]),
+            }
+            for c in already_sent
+        ]
+        st.dataframe(preview_rows, use_container_width=True, hide_index=True)
+
+    st.write("Do you want to send the emails again? Choose who should receive this send:")
+
+    mode_options = ["Only contacts already sent (resend)", "All verified contacts"]
+    mode_map = {
+        "Only contacts already sent (resend)": SendMode.RESEND_ONLY.value,
+        "All verified contacts": SendMode.ALL_VERIFIED.value,
+    }
+    if never_sent:
+        mode_options.insert(1, "Only new, never-sent verified contacts")
+        mode_map["Only new, never-sent verified contacts"] = SendMode.NORMAL.value
+
+    mode_label = st.radio("Target contacts:", mode_options)
+    chosen_mode = mode_map[mode_label]
+
+    col_yes, col_no = st.columns(2)
+    with col_yes:
+        if st.button("Yes, Send Again", type="primary", use_container_width=True):
+            st.session_state["pending_send_mode"] = chosen_mode
+            st.session_state["open_draft_review"] = True
+            st.rerun()
+    with col_no:
+        if st.button("No, Cancel", use_container_width=True):
+            st.rerun()

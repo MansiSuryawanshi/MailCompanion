@@ -23,6 +23,7 @@ from constants import (
     COL_VERIFIED,
     DATA_SOURCE_SQLITE,
     CampaignStatus,
+    SendMode,
 )
 from services.db_service import DBService
 from services.email_provider import EmailProvider
@@ -45,6 +46,57 @@ def render_template_string(template_str: str, context: Dict[str, Any]) -> str:
         return f"[Template Syntax Error: {e}]"
     except Exception as e:
         return f"[Template Render Error: {e}]"
+
+
+def resolve_last_sent_info(row: Dict[str, Any]) -> Optional[Tuple[str, str]]:
+    """
+    Walks the sequence of sent-date columns for a contact (Email Sent Date & Time,
+    Email Sent Date & Time 2, ...) and returns (column_name, value) for the most
+    recent one that has a value, or None if this contact has never been sent to.
+    Each row's filled columns are always contiguous from the first, since sends
+    always target the first empty column for that row (see resolve_next_sent_column).
+    """
+    last: Optional[Tuple[str, str]] = None
+    n = 1
+    while True:
+        col_name = COL_EMAIL_SENT_DATE if n == 1 else f"{COL_EMAIL_SENT_DATE} {n}"
+        if col_name not in row:
+            break
+        val = str(row.get(col_name) or "").strip()
+        if not val:
+            break
+        last = (col_name, val)
+        n += 1
+    return last
+
+
+def resolve_next_sent_column(row: Dict[str, Any]) -> str:
+    """Returns the first empty sent-date column name for this contact's send history."""
+    n = 1
+    while True:
+        col_name = COL_EMAIL_SENT_DATE if n == 1 else f"{COL_EMAIL_SENT_DATE} {n}"
+        if not str(row.get(col_name, "") or "").strip():
+            return col_name
+        n += 1
+
+
+def format_elapsed(seconds: Optional[float]) -> str:
+    """Formats a duration in seconds as a short human-readable string."""
+    if seconds is None or seconds < 0:
+        return "Unknown"
+
+    seconds = int(seconds)
+    days, rem = divmod(seconds, 86400)
+    hours, rem = divmod(rem, 3600)
+    minutes, _ = divmod(rem, 60)
+
+    if days > 0:
+        return f"{days} day{'s' if days != 1 else ''}, {hours} hour{'s' if hours != 1 else ''}"
+    if hours > 0:
+        return f"{hours} hour{'s' if hours != 1 else ''}, {minutes} minute{'s' if minutes != 1 else ''}"
+    if minutes > 0:
+        return f"{minutes} minute{'s' if minutes != 1 else ''}"
+    return "Less than a minute"
 
 
 class EmailService:
@@ -209,11 +261,54 @@ class EmailService:
             "invalid": invalid,
         }
 
+    def analyze_resend_state(self, campaign: Campaign) -> Dict[str, Any]:
+        """
+        Scans all eligible (verified, valid, non-duplicate) contacts and splits them into
+        those who have already been sent to at least once (with their last-sent timestamp
+        and elapsed time) versus those who have never been sent to. Used to decide whether
+        to prompt for a resend before dispatching, and to populate that prompt.
+        """
+        contacts = self.get_contacts(campaign)
+        seen_emails = set()
+
+        already_sent = []
+        never_sent = []
+        now = datetime.now()
+
+        for row in contacts:
+            eval_res = evaluate_contact_row(row, seen_emails)
+            if not eval_res["can_send"]:
+                continue
+
+            email = str(row.get(COL_EMAIL, "") or "").strip()
+            first_name = str(row.get(COL_FIRST_NAME, "") or "").strip()
+            last_info = resolve_last_sent_info(row)
+
+            if last_info:
+                col_name, ts_str = last_info
+                elapsed_seconds = None
+                try:
+                    last_dt = datetime.strptime(ts_str, "%Y-%m-%d %H:%M:%S")
+                    elapsed_seconds = (now - last_dt).total_seconds()
+                except ValueError:
+                    pass
+                already_sent.append({
+                    "email": email,
+                    "first_name": first_name,
+                    "last_sent_column": col_name,
+                    "last_sent_at": ts_str,
+                    "elapsed_seconds": elapsed_seconds,
+                })
+            else:
+                never_sent.append({"email": email, "first_name": first_name})
+
+        return {"already_sent": already_sent, "never_sent": never_sent}
+
     def execute_campaign_batch(
         self,
         campaign: Campaign,
         progress_callback: Optional[Callable[[Dict[str, Any]], None]] = None,
-        retry_failed_only: bool = False,
+        send_mode: str = SendMode.NORMAL.value,
     ) -> Dict[str, Any]:
         """
         Executes campaign batch email dispatching.
@@ -243,15 +338,23 @@ class EmailService:
         targets = []
         for row in contacts:
             eval_res = evaluate_contact_row(row, seen_emails)
-            sent_date = str(row.get(COL_EMAIL_SENT_DATE, "") or "").strip()
             status = str(row.get(COL_STATUS, "") or "").strip()
+            is_already_sent = bool(resolve_last_sent_info(row)) or status in (
+                CampaignStatus.SENT.value, CampaignStatus.FOLLOWUP_SENT.value,
+            )
 
-            if retry_failed_only:
+            if send_mode == SendMode.RETRY_FAILED.value:
                 if status == CampaignStatus.FAILED.value:
+                    targets.append(row)
+            elif send_mode == SendMode.RESEND_ONLY.value:
+                if eval_res["can_send"] and is_already_sent:
+                    targets.append(row)
+            elif send_mode == SendMode.ALL_VERIFIED.value:
+                if eval_res["can_send"]:
                     targets.append(row)
             else:
                 # Normal run: send if verified, valid, name present, not sent yet
-                if eval_res["can_send"] and not sent_date and status not in (CampaignStatus.SENT.value, CampaignStatus.FOLLOWUP_SENT.value):
+                if eval_res["can_send"] and not is_already_sent:
                     targets.append(row)
 
         total_targets = len(targets)
@@ -322,8 +425,11 @@ class EmailService:
                 )
                 if res["success"]:
                     sent_count += 1
+                    sent_col = resolve_next_sent_column(row)
+                    if campaign.spreadsheet_id:
+                        self.sheets_service.ensure_column(sent_col)
                     self.update_row(campaign, row_num, {
-                        COL_EMAIL_SENT_DATE: now_iso,
+                        sent_col: now_iso,
                         COL_STATUS: CampaignStatus.SENT.value,
                         COL_ATTEMPT_COUNT: 1,
                         COL_LAST_UPDATED: now_iso,
