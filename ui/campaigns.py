@@ -26,6 +26,9 @@ def render_campaigns(config_manager: ConfigManager):
     if selected_id != active_campaign.id:
         config_manager.set_active_campaign(selected_id)
         st.toast(f"Switched active campaign to '{campaigns[selected_id].name}'", icon="🎯")
+        for k in ["init_subj_input", "init_body_input", "follow_subj_input", "follow_body_input"]:
+            if k in st.session_state:
+                del st.session_state[k]
         st.rerun()
 
     current_c = config_manager.get_active_campaign()

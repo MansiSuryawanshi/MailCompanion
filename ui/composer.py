@@ -11,11 +11,33 @@ from services.sheets_service import SheetsService
 from utils.logger import get_logs_dataframe
 
 
+def save_composer_templates(campaign, config_manager):
+    updated = False
+    if "init_subj_input" in st.session_state and st.session_state["init_subj_input"] != campaign.initial_subject:
+        campaign.initial_subject = st.session_state["init_subj_input"]
+        updated = True
+    if "init_body_input" in st.session_state and st.session_state["init_body_input"] != campaign.initial_body:
+        campaign.initial_body = st.session_state["init_body_input"]
+        updated = True
+    if "follow_subj_input" in st.session_state and st.session_state["follow_subj_input"] != campaign.followup_subject:
+        campaign.followup_subject = st.session_state["follow_subj_input"]
+        updated = True
+    if "follow_body_input" in st.session_state and st.session_state["follow_body_input"] != campaign.followup_body:
+        campaign.followup_body = st.session_state["follow_body_input"]
+        updated = True
+    if updated:
+        config_manager.update_campaign(campaign)
+
+
 def render_composer(config_manager: ConfigManager, auth_service: AuthService):
     st.title("✍️ Email Composer & Campaign Execution")
     st.caption("Design personalized templates, preview live dynamic emails, execute dry runs, and dispatch campaign emails.")
 
     active_campaign = config_manager.get_active_campaign()
+    
+    # Auto-save templates if edited in composer inputs
+    save_composer_templates(active_campaign, config_manager)
+
     sp_id = active_campaign.spreadsheet_id
 
     sheets_service = SheetsService(auth_service, sp_id) if sp_id else None
@@ -28,12 +50,12 @@ def render_composer(config_manager: ConfigManager, auth_service: AuthService):
 
     with tab_compose:
         st.subheader("Initial Email Template")
-        init_subj = st.text_input("Initial Email Subject", value=active_campaign.initial_subject)
-        init_body = st.text_area("Initial Email Body (HTML or Text)", value=active_campaign.initial_body, height=180)
+        init_subj = st.text_input("Initial Email Subject", value=active_campaign.initial_subject, key="init_subj_input")
+        init_body = st.text_area("Initial Email Body (HTML or Text)", value=active_campaign.initial_body, height=180, key="init_body_input")
 
         st.subheader("Follow-up Email Template")
-        follow_subj = st.text_input("Follow-up Email Subject", value=active_campaign.followup_subject)
-        follow_body = st.text_area("Follow-up Email Body (HTML or Text)", value=active_campaign.followup_body, height=180)
+        follow_subj = st.text_input("Follow-up Email Subject", value=active_campaign.followup_subject, key="follow_subj_input")
+        follow_body = st.text_area("Follow-up Email Body (HTML or Text)", value=active_campaign.followup_body, height=180, key="follow_body_input")
 
         if st.button("💾 Save Templates to Campaign", type="primary"):
             active_campaign.initial_subject = init_subj
@@ -242,4 +264,3 @@ def show_draft_review_dialog(campaign, email_service, retry_failed=False):
             campaign.initial_body = edited_body
             email_service.config_manager.update_campaign(campaign)
             st.toast("Draft templates saved successfully!", icon="💾")
-            st.rerun()
