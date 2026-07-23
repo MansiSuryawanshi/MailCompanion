@@ -128,16 +128,26 @@ def render_dashboard(
             else:
                 st.error("Failed to connect to Google Sheet.")
 
+    # Check if we should execute send campaign from dialog confirmation
+    if st.session_state.get("execute_send_campaign"):
+        if not sheets_service or not gmail_provider:
+            st.error("Authenticate Google & configure Sheet URL first.")
+        else:
+            email_service = EmailService(gmail_provider, sheets_service, config_manager)
+            with st.spinner("Processing email batch..."):
+                res = email_service.execute_campaign_batch(active_campaign)
+                st.success(res.get("message"))
+                del st.session_state["execute_send_campaign"]
+                st.rerun()
+
     with qcol3:
         if st.button("✉️ Send Emails Now", use_container_width=True, type="primary"):
             if not sheets_service or not gmail_provider:
                 st.error("Authenticate Google & configure Sheet URL first.")
             else:
                 email_service = EmailService(gmail_provider, sheets_service, config_manager)
-                with st.spinner("Processing email batch..."):
-                    res = email_service.execute_campaign_batch(active_campaign)
-                    st.success(res.get("message"))
-                    st.rerun()
+                from ui.composer import show_draft_review_dialog
+                show_draft_review_dialog(active_campaign, email_service, retry_failed=False)
 
     with qcol4:
         if st.button("🔔 Check Follow-ups", use_container_width=True):

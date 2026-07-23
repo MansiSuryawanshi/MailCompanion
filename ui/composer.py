@@ -119,11 +119,13 @@ def render_composer(config_manager: ConfigManager, auth_service: AuthService):
 
         retry_failed = st.checkbox("Retry Failed Emails Only", value=False)
 
-        if st.button("🔥 START CAMPAIGN SEND NOW", type="primary", use_container_width=True):
+        # Check if we should execute send campaign from dialog confirmation
+        if st.session_state.get("execute_send_campaign"):
             if not sheets_service or not gmail_provider or not sp_id:
                 st.error("Google Auth and valid Sheet URL required.")
             else:
                 email_service = EmailService(gmail_provider, sheets_service, config_manager)
+                retry_failed_only = st.session_state.get("retry_failed_emails", False)
 
                 progress_bar = st.progress(0.0)
                 status_text = st.empty()
@@ -139,9 +141,105 @@ def render_composer(config_manager: ConfigManager, auth_service: AuthService):
 
                 with st.spinner("Dispatching campaign..."):
                     res = email_service.execute_campaign_batch(
-                        active_campaign, progress_callback=update_progress, retry_failed_only=retry_failed
+                        active_campaign, progress_callback=update_progress, retry_failed_only=retry_failed_only
                     )
 
                 progress_bar.progress(1.0)
                 st.success(res["message"])
+                del st.session_state["execute_send_campaign"]
+                if "retry_failed_emails" in st.session_state:
+                    del st.session_state["retry_failed_emails"]
                 st.rerun()
+
+        if st.button("🔥 START CAMPAIGN SEND NOW", type="primary", use_container_width=True):
+            if not sheets_service or not gmail_provider or not sp_id:
+                st.error("Google Auth and valid Sheet URL required.")
+            else:
+                email_service = EmailService(gmail_provider, sheets_service, config_manager)
+                show_draft_review_dialog(active_campaign, email_service, retry_failed=retry_failed)
+
+
+@st.dialog("Review Draft Email")
+def show_draft_review_dialog(campaign, email_service, retry_failed=False):
+    st.write("Review the draft email for the first pending contact before dispatching the campaign:")
+
+    # Retrieve contacts to preview the first pending email
+    try:
+        contacts = email_service.get_contacts(campaign)
+    except Exception as e:
+        st.error(f"Failed to fetch contacts: {e}")
+        return
+
+    from utils.validator import evaluate_contact_row
+    from constants import COL_EMAIL, COL_FIRST_NAME, COL_VERIFIED, COL_STATUS, COL_EMAIL_SENT_DATE, CampaignStatus
+
+    seen_emails = set()
+    first_pending_contact = None
+    for row in contacts:
+        eval_res = evaluate_contact_row(row, seen_emails)
+        sent_date = str(row.get(COL_EMAIL_SENT_DATE, "") or "").strip()
+        status = str(row.get(COL_STATUS, "") or "").strip()
+
+        if retry_failed:
+            if status == CampaignStatus.FAILED.value:
+                first_pending_contact = row
+                break
+        else:
+            if eval_res["can_send"] and not sent_date and status not in (CampaignStatus.SENT.value, CampaignStatus.FOLLOWUP_SENT.value):
+                first_pending_contact = row
+                break
+
+    if not first_pending_contact:
+        # Fallback sample contact
+        first_pending_contact = {
+            COL_FIRST_NAME: "John",
+            COL_EMAIL: "john.doe@example.com",
+            COL_VERIFIED: "Yes",
+        }
+        st.info("No matching contacts found in database. Showing preview using a sample contact.")
+
+    contact_email = first_pending_contact.get(COL_EMAIL, "")
+    contact_name = first_pending_contact.get(COL_FIRST_NAME, "")
+
+    st.write(f"📧 **Recipient Preview:** {contact_name} ({contact_email})")
+
+    # Editable inputs for Subject and Body templates
+    edited_subject = st.text_input("Subject Template", value=campaign.initial_subject)
+    edited_body = st.text_area("Body Template (HTML or Text)", value=campaign.initial_body, height=180)
+
+    # Rendered Preview
+    st.markdown("**Rendered Live Draft Preview:**")
+    from services.email_service import render_template_string
+    import streamlit.components.v1 as components
+
+    sender_name = email_service.config_manager.settings.get("sender_name", "Mansi")
+    signature = email_service.config_manager.settings.get("email_signature", "")
+
+    context = email_service.build_context(first_pending_contact, sender_name)
+    preview_subj = render_template_string(edited_subject, context)
+    preview_body = render_template_string(edited_body, context)
+    if signature and signature not in preview_body:
+        preview_body = f"{preview_body}<br>{signature}"
+
+    st.markdown(f"**Subject:** `{preview_subj}`")
+    st.markdown(preview_body, unsafe_allow_html=True)
+
+    st.write("Shall I send or edit?")
+
+    col1, col2 = st.columns(2)
+    with col1:
+        if st.button("🚀 Send Campaign", type="primary", use_container_width=True):
+            campaign.initial_subject = edited_subject
+            campaign.initial_body = edited_body
+            email_service.config_manager.update_campaign(campaign)
+
+            st.session_state["execute_send_campaign"] = True
+            st.session_state["retry_failed_emails"] = retry_failed
+            st.rerun()
+    with col2:
+        if st.button("✏️ Save & Keep Editing", use_container_width=True):
+            campaign.initial_subject = edited_subject
+            campaign.initial_body = edited_body
+            email_service.config_manager.update_campaign(campaign)
+            st.toast("Draft templates saved successfully!", icon="💾")
+            st.rerun()
