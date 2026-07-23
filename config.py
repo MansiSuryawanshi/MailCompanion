@@ -101,19 +101,28 @@ class ConfigManager:
         self._ensure_default_campaign()
 
     def _load_settings(self) -> Dict[str, Any]:
+        import random
+        # Generate randomized default execution time (full 24h range) and send delays
+        random_hour = random.randint(0, 23)
+        random_minute = random.randint(0, 59)
+        random_sched_time = f"{random_hour:02d}:{random_minute:02d}"
+
+        random_min_delay = round(random.uniform(2.0, 5.0), 1)
+        random_max_delay = round(random.uniform(6.0, 12.0), 1)
+
         default_settings = {
             "sender_name": "Mansi",
             "email_signature": "<p>--<br><strong>Mansi</strong><br>Email Campaign Manager</p>",
             "timezone": DEFAULT_TIMEZONE,
-            "min_send_delay": DEFAULT_MIN_SEND_DELAY,
-            "max_send_delay": DEFAULT_MAX_SEND_DELAY,
+            "min_send_delay": random_min_delay,
+            "max_send_delay": random_max_delay,
             "followup_days": DEFAULT_FOLLOWUP_DAYS,
             "batch_size": DEFAULT_BATCH_SIZE,
             "daily_limit": DEFAULT_DAILY_LIMIT,
             "draft_mode": False,
             "active_campaign_id": "",
             "scheduler_enabled": False,
-            "scheduler_time": "10:00",
+            "scheduler_time": random_sched_time,
             "theme": "Dark",
         }
         if os.path.exists(self.settings_file):
@@ -123,6 +132,13 @@ class ConfigManager:
                     default_settings.update(saved)
             except Exception as e:
                 print(f"Error loading settings.json: {e}")
+        else:
+            try:
+                ensure_directories()
+                with open(self.settings_file, "w", encoding="utf-8") as f:
+                    json.dump(default_settings, f, indent=4)
+            except Exception as e:
+                print(f"Error creating default settings.json: {e}")
         return default_settings
 
     def save_settings(self) -> None:
@@ -152,7 +168,13 @@ class ConfigManager:
 
     def _ensure_default_campaign(self) -> None:
         if not self.campaigns:
-            default_campaign = Campaign(name="Default Campaign")
+            default_campaign = Campaign(
+                name="Default Campaign",
+                min_send_delay=self.settings.get("min_send_delay", DEFAULT_MIN_SEND_DELAY),
+                max_send_delay=self.settings.get("max_send_delay", DEFAULT_MAX_SEND_DELAY),
+                followup_days=self.settings.get("followup_days", DEFAULT_FOLLOWUP_DAYS),
+                daily_limit=self.settings.get("daily_limit", DEFAULT_DAILY_LIMIT),
+            )
             self.campaigns[default_campaign.id] = default_campaign
             self.settings["active_campaign_id"] = default_campaign.id
             self.save_campaigns()
@@ -182,6 +204,10 @@ class ConfigManager:
             spreadsheet_url=spreadsheet_url,
             spreadsheet_id=sp_id,
             data_source=DATA_SOURCE_GOOGLE_SHEETS if sp_id else DATA_SOURCE_SQLITE,
+            min_send_delay=self.settings.get("min_send_delay", DEFAULT_MIN_SEND_DELAY),
+            max_send_delay=self.settings.get("max_send_delay", DEFAULT_MAX_SEND_DELAY),
+            followup_days=self.settings.get("followup_days", DEFAULT_FOLLOWUP_DAYS),
+            daily_limit=self.settings.get("daily_limit", DEFAULT_DAILY_LIMIT),
         )
         self.campaigns[new_campaign.id] = new_campaign
         self.settings["active_campaign_id"] = new_campaign.id
