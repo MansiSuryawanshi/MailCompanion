@@ -309,6 +309,7 @@ class EmailService:
         campaign: Campaign,
         progress_callback: Optional[Callable[[Dict[str, Any]], None]] = None,
         send_mode: str = SendMode.NORMAL.value,
+        target_emails: Optional[set] = None,
     ) -> Dict[str, Any]:
         """
         Executes campaign batch email dispatching.
@@ -334,6 +335,8 @@ class EmailService:
         contacts = self.get_contacts(campaign)
         seen_emails = set()
 
+        target_emails_clean = {e.strip().lower() for e in target_emails} if target_emails else None
+
         # Identify targets
         targets = []
         for row in contacts:
@@ -343,7 +346,11 @@ class EmailService:
                 CampaignStatus.SENT.value, CampaignStatus.FOLLOWUP_SENT.value,
             )
 
-            if send_mode == SendMode.RETRY_FAILED.value:
+            if send_mode == SendMode.SELECTED.value:
+                email_clean = str(row.get(COL_EMAIL, "") or "").strip().lower()
+                if eval_res["can_send"] and target_emails_clean and email_clean in target_emails_clean:
+                    targets.append(row)
+            elif send_mode == SendMode.RETRY_FAILED.value:
                 if status == CampaignStatus.FAILED.value:
                     targets.append(row)
             elif send_mode == SendMode.RESEND_ONLY.value:

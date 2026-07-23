@@ -136,24 +136,28 @@ def render_dashboard(
         else:
             email_service = EmailService(gmail_provider, sheets_service, config_manager)
             send_mode = st.session_state.get("send_mode", SendMode.NORMAL.value)
+            target_emails = st.session_state.get("target_emails")
             with st.spinner("Processing email batch..."):
-                res = email_service.execute_campaign_batch(active_campaign, send_mode=send_mode)
+                res = email_service.execute_campaign_batch(active_campaign, send_mode=send_mode, target_emails=target_emails)
                 st.success(res.get("message"))
                 del st.session_state["execute_send_campaign"]
                 if "send_mode" in st.session_state:
                     del st.session_state["send_mode"]
+                if "target_emails" in st.session_state:
+                    del st.session_state["target_emails"]
                 st.rerun()
 
     # Check if a resend was just confirmed -> open the draft review dialog for it
     if st.session_state.get("open_draft_review"):
         del st.session_state["open_draft_review"]
         confirmed_mode = st.session_state.pop("pending_send_mode", SendMode.NORMAL.value)
+        confirmed_targets = st.session_state.pop("pending_target_emails", None)
         if not sheets_service or not gmail_provider:
             st.error("Please connect to Google and configure your spreadsheet link first.")
         else:
             email_service = EmailService(gmail_provider, sheets_service, config_manager)
             from ui.composer import show_draft_review_dialog
-            show_draft_review_dialog(active_campaign, email_service, send_mode=confirmed_mode)
+            show_draft_review_dialog(active_campaign, email_service, send_mode=confirmed_mode, target_emails=confirmed_targets)
 
     with qcol3:
         if st.button("✉️ Start Sending Emails", use_container_width=True, type="primary"):

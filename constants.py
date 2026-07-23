@@ -26,6 +26,7 @@ class SendMode(str, Enum):
     RETRY_FAILED = "retry_failed"  # only contacts whose last attempt failed
     RESEND_ONLY = "resend_only"    # only contacts already sent before (resend)
     ALL_VERIFIED = "all_verified"  # every eligible verified contact, sent or not
+    SELECTED = "selected"          # only the explicit set of contacts the user picked
 
 # Required User Source Columns
 COL_FIRST_NAME = "First Name"

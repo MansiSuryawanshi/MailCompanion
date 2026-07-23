@@ -3,6 +3,7 @@ ui/composer.py - Email Composer, Template Editor, Live Preview, Dry-Run & Execut
 """
 import streamlit as st
 import streamlit.components.v1 as components
+import pandas as pd
 from config import ConfigManager
 from constants import SendMode
 from services.auth_service import AuthService
@@ -149,6 +150,7 @@ def render_composer(config_manager: ConfigManager, auth_service: AuthService):
             else:
                 email_service = EmailService(gmail_provider, sheets_service, config_manager)
                 send_mode = st.session_state.get("send_mode", SendMode.NORMAL.value)
+                target_emails = st.session_state.get("target_emails")
 
                 progress_bar = st.progress(0.0)
                 status_text = st.empty()
@@ -164,7 +166,7 @@ def render_composer(config_manager: ConfigManager, auth_service: AuthService):
 
                 with st.spinner("Sending campaign emails..."):
                     res = email_service.execute_campaign_batch(
-                        active_campaign, progress_callback=update_progress, send_mode=send_mode
+                        active_campaign, progress_callback=update_progress, send_mode=send_mode, target_emails=target_emails
                     )
 
                 progress_bar.progress(1.0)
@@ -172,17 +174,20 @@ def render_composer(config_manager: ConfigManager, auth_service: AuthService):
                 del st.session_state["execute_send_campaign"]
                 if "send_mode" in st.session_state:
                     del st.session_state["send_mode"]
+                if "target_emails" in st.session_state:
+                    del st.session_state["target_emails"]
                 st.rerun()
 
         # Check if a resend was just confirmed -> open the draft review dialog for it
         if st.session_state.get("open_draft_review"):
             del st.session_state["open_draft_review"]
             confirmed_mode = st.session_state.pop("pending_send_mode", SendMode.NORMAL.value)
+            confirmed_targets = st.session_state.pop("pending_target_emails", None)
             if not sheets_service or not gmail_provider or not sp_id:
                 st.error("Please connect to Google and configure your spreadsheet link first.")
             else:
                 email_service = EmailService(gmail_provider, sheets_service, config_manager)
-                show_draft_review_dialog(active_campaign, email_service, send_mode=confirmed_mode)
+                show_draft_review_dialog(active_campaign, email_service, send_mode=confirmed_mode, target_emails=confirmed_targets)
 
         if st.button("🚀 START SENDING EMAILS NOW", type="primary", use_container_width=True):
             if not sheets_service or not gmail_provider or not sp_id:
@@ -200,8 +205,11 @@ def render_composer(config_manager: ConfigManager, auth_service: AuthService):
 
 
 @st.dialog("Review First Email Draft")
-def show_draft_review_dialog(campaign, email_service, send_mode=SendMode.NORMAL.value):
-    st.write("Review how the email looks for the first person before sending the campaign:")
+def show_draft_review_dialog(campaign, email_service, send_mode=SendMode.NORMAL.value, target_emails=None):
+    if send_mode == SendMode.SELECTED.value and target_emails:
+        st.write(f"Review how the email looks before sending to the **{len(target_emails)}** people you selected:")
+    else:
+        st.write("Review how the email looks for the first person before sending the campaign:")
 
     # Retrieve contacts to preview the first matching email
     try:
@@ -214,14 +222,21 @@ def show_draft_review_dialog(campaign, email_service, send_mode=SendMode.NORMAL.
     from constants import COL_EMAIL, COL_FIRST_NAME, COL_VERIFIED, COL_STATUS, CampaignStatus
     from services.email_service import resolve_last_sent_info
 
+    target_emails_clean = {e.strip().lower() for e in target_emails} if target_emails else None
+
     seen_emails = set()
     first_pending_contact = None
     for row in contacts:
         eval_res = evaluate_contact_row(row, seen_emails)
         status = str(row.get(COL_STATUS, "") or "").strip()
         is_already_sent = bool(resolve_last_sent_info(row)) or status in (CampaignStatus.SENT.value, CampaignStatus.FOLLOWUP_SENT.value)
+        email_clean = str(row.get(COL_EMAIL, "") or "").strip().lower()
 
-        if send_mode == SendMode.RETRY_FAILED.value:
+        if send_mode == SendMode.SELECTED.value:
+            if eval_res["can_send"] and target_emails_clean and email_clean in target_emails_clean:
+                first_pending_contact = row
+                break
+        elif send_mode == SendMode.RETRY_FAILED.value:
             if status == CampaignStatus.FAILED.value:
                 first_pending_contact = row
                 break
@@ -284,6 +299,7 @@ def show_draft_review_dialog(campaign, email_service, send_mode=SendMode.NORMAL.
 
             st.session_state["execute_send_campaign"] = True
             st.session_state["send_mode"] = send_mode
+            st.session_state["target_emails"] = target_emails
             st.rerun()
     with col2:
         if st.button("✏️ Save & Keep Editing", use_container_width=True):
@@ -335,10 +351,54 @@ def confirm_resend_dialog(campaign, email_service, analysis):
     mode_label = st.radio("Who should we send to?", mode_options)
     chosen_mode = mode_map[mode_label]
 
+    picker_rows = []
+    for c in already_sent:
+        picker_rows.append({
+            "Send?": False,
+            "Email": c["email"],
+            "First Name": c["first_name"],
+            "Status": "Already Sent",
+            "Last Sent": f"{c['last_sent_at']} ({format_elapsed(c['elapsed_seconds'])} ago)",
+        })
+    for c in never_sent:
+        picker_rows.append({
+            "Send?": False,
+            "Email": c["email"],
+            "First Name": c["first_name"],
+            "Status": "Never Sent",
+            "Last Sent": "-",
+        })
+
+    with st.expander("🎯 Or pick specific people to email instead", expanded=False):
+        st.caption(
+            "Tick anyone you want to email, no matter which option you picked above. "
+            "If you tick anyone here, only the ticked people will get the email."
+        )
+        picker_df = pd.DataFrame(picker_rows)
+        edited_df = st.data_editor(
+            picker_df,
+            use_container_width=True,
+            hide_index=True,
+            disabled=["Email", "First Name", "Status", "Last Sent"],
+            column_config={"Send?": st.column_config.CheckboxColumn("Send?")},
+            key="resend_people_picker",
+        )
+
     col_yes, col_no = st.columns(2)
     with col_yes:
         if st.button("Yes, Continue", type="primary", use_container_width=True):
-            st.session_state["pending_send_mode"] = chosen_mode
+            selected_emails = {
+                row["Email"].strip().lower()
+                for _, row in edited_df.iterrows()
+                if row.get("Send?")
+            } if picker_rows else set()
+
+            if selected_emails:
+                st.session_state["pending_send_mode"] = SendMode.SELECTED.value
+                st.session_state["pending_target_emails"] = selected_emails
+            else:
+                st.session_state["pending_send_mode"] = chosen_mode
+                st.session_state["pending_target_emails"] = None
             st.session_state["open_draft_review"] = True
             st.rerun()
     with col_no:
